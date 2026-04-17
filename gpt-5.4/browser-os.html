@@ -78,17 +78,33 @@
       position: absolute;
       inset: 18px 18px calc(var(--taskbar-height) + 20px) 18px;
       pointer-events: none;
+      z-index: 5;
     }
 
     .desktop-icon {
       position: absolute;
-      width: 92px;
+      width: 84px;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      appearance: none;
+      -webkit-appearance: none;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
       pointer-events: auto;
       text-align: center;
       cursor: pointer;
       user-select: none;
       color: #f8fafc;
       text-shadow: 0 2px 8px rgba(0, 0, 0, 0.6);
+    }
+
+    .desktop-icon:focus-visible {
+      outline: 2px solid rgba(110, 231, 249, 0.8);
+      outline-offset: 6px;
+      border-radius: 20px;
     }
 
     .icon-badge {
@@ -110,16 +126,20 @@
       display: block;
       font-size: 12px;
       line-height: 1.2;
+      width: 100%;
     }
 
     #window-layer {
       position: absolute;
       inset: 0;
       overflow: hidden;
+      pointer-events: none;
+      z-index: 10;
     }
 
     .window {
       position: absolute;
+      pointer-events: auto;
       min-width: 320px;
       min-height: 220px;
       width: min(740px, calc(100vw - 40px));
@@ -547,7 +567,7 @@
       }
 
       .desktop-icon {
-        width: 82px;
+        width: 74px;
       }
 
       #taskbar {
@@ -1011,15 +1031,23 @@
 
       function renderDesktopIcons(appList) {
         desktopIcons.innerHTML = "";
+        const rowHeight = window.innerWidth <= 960 ? 84 : 92;
+        const columnWidth = window.innerWidth <= 960 ? 86 : 96;
+        const availableHeight = Math.max(1, desktopIcons.clientHeight - 12);
+        const rows = Math.max(1, Math.floor(availableHeight / rowHeight));
         appList.forEach((app, index) => {
           const icon = document.createElement("button");
           icon.type = "button";
           icon.className = "desktop-icon";
-          icon.style.left = 12 + Math.floor(index / 6) * 108 + "px";
-          icon.style.top = 10 + (index % 6) * 102 + "px";
+          const column = Math.floor(index / rows);
+          const row = index % rows;
+          icon.style.left = 12 + column * columnWidth + "px";
+          icon.style.top = 10 + row * rowHeight + "px";
           icon.innerHTML = "<div class=\"icon-badge\">" + app.badge + "</div><span>" + app.name + "</span>";
-          icon.addEventListener("dblclick", () => createWindow(app));
-          icon.addEventListener("click", () => focusIcon(icon));
+          icon.addEventListener("click", () => {
+            focusIcon(icon);
+            createWindow(app);
+          });
           desktopIcons.appendChild(icon);
         });
       }
@@ -2105,6 +2133,7 @@
       setWallpaper(state.wallpaper, false);
       updateClock();
       window.setInterval(updateClock, 1000);
+      window.addEventListener("resize", () => renderDesktopIcons(apps));
       createWindow(apps[0]);
       createWindow(apps[1]);
       logActivity("system", "Browser OS booted on " + MODEL_NAME + ".", "System");
