@@ -1,0 +1,1605 @@
+<!DOCTYPE html>
+<html lang="en">
+<!--
+  Browser OS — single-file faux desktop for Chrome.
+  Wallpaper: #desktop uses CSS custom property --wallpaper (presets + optional image data URL).
+  Apps: Vice City Lite (3D driving), Hyper Tunnel (3D rings + dodge), Wallpaper, Notes+VFS, Calculator.
+  Special: Virtual File System (localStorage) with Trash + Snapshots (see Notes / About).
+  Three.js loaded from CDN (requires network). See About app for limits and controls.
+-->
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Browser OS</title>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
+    }
+  }
+  </script>
+  <style>
+    :root {
+      --taskbar-h: 44px;
+      --accent: #3b82f6;
+      --accent-2: #22c55e;
+      --glass: rgba(20, 24, 32, 0.72);
+      --glass-b: rgba(255, 255, 255, 0.12);
+      --text: #e8edf7;
+      --muted: #9aa3b5;
+      --danger: #ef4444;
+      --wallpaper: linear-gradient(135deg, #0f172a 0%, #1e293b 40%, #312e81 100%);
+      --shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
+      --radius: 10px;
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+    }
+
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; overflow: hidden; background: #0b1020; color: var(--text); }
+
+    #desktop {
+      position: absolute;
+      inset: 0;
+      padding-bottom: var(--taskbar-h);
+      background-image: var(--wallpaper);
+      background-size: cover;
+      background-position: center;
+      background-repeat: no-repeat;
+      transition: background-image 0.35s ease;
+    }
+
+    #desktop::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background: radial-gradient(1200px 600px at 20% 10%, rgba(255,255,255,0.06), transparent 55%),
+                  linear-gradient(to bottom, rgba(0,0,0,0.15), rgba(0,0,0,0.35));
+    }
+
+    .icon-grid {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      grid-template-columns: repeat(auto-fill, 92px);
+      gap: 10px 8px;
+      padding: 16px;
+      max-width: 420px;
+    }
+
+    .d-icon {
+      width: 88px;
+      padding: 8px 6px;
+      border-radius: 12px;
+      border: 1px solid transparent;
+      text-align: center;
+      cursor: pointer;
+      user-select: none;
+      color: var(--text);
+      text-shadow: 0 1px 3px rgba(0,0,0,0.65);
+    }
+    .d-icon:hover { background: rgba(255,255,255,0.08); border-color: rgba(255,255,255,0.12); }
+    .d-icon:active { transform: translateY(1px); }
+    .d-icon .glyph {
+      width: 52px;
+      height: 52px;
+      margin: 0 auto 6px;
+      border-radius: 14px;
+      display: grid;
+      place-items: center;
+      font-size: 26px;
+      background: linear-gradient(180deg, rgba(255,255,255,0.16), rgba(255,255,255,0.06));
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.18), 0 8px 22px rgba(0,0,0,0.35);
+      border: 1px solid rgba(255,255,255,0.14);
+    }
+    .d-icon .label { font-size: 12px; line-height:1.2; word-break: break-word; }
+
+    #taskbar {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      height: var(--taskbar-h);
+      z-index: 20000;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 0 10px;
+      background: var(--glass);
+      border-top: 1px solid var(--glass-b);
+      backdrop-filter: blur(14px);
+    }
+
+    .start-btn {
+      height: 34px;
+      padding: 0 14px;
+      border-radius: 999px;
+      border: 1px solid rgba(255,255,255,0.14);
+      background: linear-gradient(180deg, rgba(59,130,246,0.35), rgba(59,130,246,0.15));
+      color: var(--text);
+      cursor: pointer;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+    }
+    .start-btn:hover { filter: brightness(1.08); }
+
+    #clock {
+      margin-left: auto;
+      font-variant-numeric: tabular-nums;
+      font-size: 13px;
+      color: var(--muted);
+      padding-right: 6px;
+    }
+
+    #start-menu {
+      display: none;
+      position: absolute;
+      bottom: calc(var(--taskbar-h) + 8px);
+      left: 10px;
+      width: 280px;
+      z-index: 21000;
+      background: var(--glass);
+      border: 1px solid var(--glass-b);
+      border-radius: 14px;
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(18px);
+      overflow: hidden;
+    }
+    #start-menu.open { display: block; }
+
+    .sm-row {
+      padding: 12px 14px;
+      cursor: pointer;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+      font-size: 14px;
+    }
+    .sm-row:hover { background: rgba(255,255,255,0.08); }
+    .sm-title { padding: 12px 14px 6px; font-size: 11px; letter-spacing: 0.08em; color: var(--muted); text-transform: uppercase; }
+
+    #windows-root { position: absolute; inset: 0; pointer-events: none; z-index: 100; }
+    #windows-root > * { pointer-events: auto; }
+
+    .win {
+      position: absolute;
+      min-width: 280px;
+      min-height: 160px;
+      width: 720px;
+      height: 480px;
+      left: 80px;
+      top: 48px;
+      border-radius: 12px;
+      background: rgba(12, 15, 22, 0.92);
+      border: 1px solid rgba(255,255,255,0.12);
+      box-shadow: var(--shadow);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .win.focused { border-color: rgba(59, 130, 246, 0.55); box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.25), var(--shadow); }
+
+    .win-tb {
+      height: 38px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0 10px;
+      background: linear-gradient(180deg, rgba(255,255,255,0.07), rgba(255,255,255,0.02));
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+      cursor: grab;
+      user-select: none;
+    }
+    .win-tb:active { cursor: grabbing; }
+
+    .win-title { font-size: 13px; font-weight: 600; color: var(--text); flex: 1; }
+    .win-actions { display: flex; gap: 6px; align-items: center; }
+    .win-btn {
+      width: 28px; height: 26px;
+      border-radius: 8px;
+      border: 1px solid rgba(255,255,255,0.12);
+      background: rgba(0,0,0,0.25);
+      color: var(--text);
+      cursor: pointer;
+      line-height: 1;
+    }
+    .win-btn:hover { background: rgba(255,255,255,0.08); }
+    .win-btn.danger:hover { background: rgba(239,68,68,0.35); border-color: rgba(239,68,68,0.5); }
+
+    .win-body { flex: 1; min-height: 0; position: relative; overflow: hidden; background: rgba(8,10,14,0.85); color: var(--text); }
+
+    /* In-app UI */
+    .panel { padding: 14px; height: 100%; overflow: auto; }
+    .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+
+    button.btn, .btn {
+      appearance: none;
+      border: 1px solid rgba(255,255,255,0.14);
+      background: rgba(255,255,255,0.06);
+      color: var(--text);
+      padding: 8px 12px;
+      border-radius: 10px;
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 13px;
+    }
+    button.btn:hover, .btn:hover { background: rgba(255,255,255,0.11); }
+
+    button.primary {
+      border-color: rgba(59,130,246,0.55);
+      background: rgba(59,130,246,0.22);
+    }
+
+    textarea.input {
+      width: 100%;
+      height: calc(100% - 54px);
+      resize: none;
+      border-radius: 10px;
+      border: 1px solid rgba(255,255,255,0.12);
+      background: rgba(0,0,0,0.35);
+      color: var(--text);
+      padding: 10px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    select.input, input.input {
+      border-radius: 10px;
+      border: 1px solid rgba(255,255,255,0.12);
+      background: rgba(0,0,0,0.35);
+      color: var(--text);
+      padding: 8px 10px;
+      font-size: 13px;
+    }
+
+    .muted { color: var(--muted); font-size: 13px; line-height: 1.45; }
+    .kbd {
+      border: 1px solid rgba(255,255,255,0.14);
+      background: rgba(255,255,255,0.06);
+      padding: 2px 6px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-family: ui-monospace, monospace;
+    }
+
+    /* Calculator */
+    .calc-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+      max-width: 360px;
+      margin-top: 10px;
+    }
+    .calc-grid button {
+      padding: 14px;
+      font-size: 16px;
+      border-radius: 12px;
+      border: 1px solid rgba(255,255,255,0.12);
+      background: rgba(255,255,255,0.06);
+      color: var(--text);
+      cursor: pointer;
+    }
+    .calc-grid button:hover { background: rgba(255,255,255,0.11); }
+    .calc-display {
+      width: 100%;
+      max-width: 360px;
+      text-align: right;
+      font-size: 28px;
+      padding: 12px 14px;
+      border-radius: 12px;
+      border: 1px solid rgba(255,255,255,0.12);
+      background: rgba(0,0,0,0.45);
+      font-variant-numeric: tabular-nums;
+      min-height: 54px;
+    }
+
+    canvas.os-canvas { width: 100%; height: 100%; display: block; outline: none; }
+
+    .hud {
+      position: absolute;
+      left: 10px; top: 10px;
+      padding: 8px 10px;
+      border-radius: 10px;
+      border: 1px solid rgba(255,255,255,0.12);
+      background: rgba(0,0,0,0.45);
+      font-size: 12px;
+      line-height: 1.35;
+      pointer-events: none;
+      z-index: 5;
+      max-width: min(520px, 92%);
+    }
+
+    .wall-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 10px;
+    }
+    .wall-tile {
+      border-radius: 12px;
+      height: 70px;
+      cursor: pointer;
+      border: 2px solid transparent;
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.12);
+    }
+    .wall-tile.active { border-color: rgba(59,130,246,0.85); }
+
+    .vfs-tools { margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; }
+
+    .vfs-list {
+      margin-top: 8px;
+      font-size: 12px;
+      max-height: 120px;
+      overflow: auto;
+      border-radius: 10px;
+      border: 1px solid rgba(255,255,255,0.12);
+      background: rgba(0,0,0,0.28);
+      padding: 8px;
+    }
+    .vfs-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      justify-content: space-between;
+      padding: 4px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+    }
+    .vfs-row:last-child { border-bottom: 0; }
+    .vfs-row .path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+
+    details.about-box {
+      margin-top: 14px;
+      border-radius: 12px;
+      border: 1px solid rgba(255,255,255,0.12);
+      padding: 10px 12px;
+      background: rgba(255,255,255,0.04);
+    }
+    details.about-box summary { cursor: pointer; font-weight: 700; }
+
+    .mono { font-family: ui-monospace, monospace; font-size: 12px; white-space: pre-wrap; }
+
+    #toast {
+      position: absolute;
+      bottom: calc(var(--taskbar-h) + 14px);
+      right: 14px;
+      z-index: 22000;
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px solid rgba(255,255,255,0.14);
+      background: rgba(10,12,18,0.92);
+      box-shadow: var(--shadow);
+      display: none;
+      max-width: min(520px, 92vw);
+      font-size: 13px;
+    }
+    #toast.show { display: block; }
+  </style>
+</head>
+<body>
+  <div id="desktop" aria-label="Desktop">
+    <div class="icon-grid" id="icon-grid"></div>
+  </div>
+
+  <div id="taskbar" role="navigation" aria-label="Taskbar">
+    <button class="start-btn" id="start-btn" type="button" aria-expanded="false" aria-controls="start-menu">Start</button>
+    <div id="clock" aria-live="polite"></div>
+  </div>
+
+  <div id="start-menu" role="menu" aria-label="Start menu">
+    <div class="sm-title">System</div>
+    <div class="sm-row" role="menuitem" data-action="about">About Browser OS</div>
+    <div class="sm-title">Power</div>
+    <div class="sm-row" role="menuitem" data-action="reload">Reload (apply updates)</div>
+  </div>
+
+  <div id="windows-root" aria-live="polite"></div>
+  <div id="toast" role="status"></div>
+
+  <script type="module">
+  import * as THREE from "three";
+
+  /** @typedef {{ id:string, title:string, icon:string, width?:number, height?:number, minW?:number, minH?:number, create:(m:MountCtx)=>Unmount }} AppDef */
+  /** @typedef {{ root:HTMLElement, win:HTMLElement, appId:string }} MountCtx */
+  /** @typedef {{ destroy:()=>void }} Unmount */
+
+  const STORAGE = {
+    WALLPAPER: "browseros_wallpaper_v1",
+    VFS: "browseros_vfs_v1"
+  };
+
+  function toast(msg, ms = 3200) {
+    const el = document.getElementById("toast");
+    el.textContent = msg;
+    el.classList.add("show");
+    clearTimeout(toast._t);
+    toast._t = setTimeout(() => el.classList.remove("show"), ms);
+  }
+
+  function clamp(n, a, b) { return Math.max(a, Math.min(b, n)); }
+
+  // --- Wallpaper (persist preset; uploads session-only unless small) ---
+  const WALL_PRESETS = [
+    { id: "default", label: "Nebula", css: "linear-gradient(135deg, #0f172a 0%, #1e293b 40%, #312e81 100%)" },
+    { id: "aurora", label: "Aurora", css: "linear-gradient(135deg, #052e16 0%, #064e3b 35%, #1d4ed8 100%)" },
+    { id: "sunset", label: "Sunset", css: "linear-gradient(135deg, #431407 0%, #9a3412 45%, #f59e0b 100%)" },
+    { id: "rose", label: "Rose", css: "linear-gradient(135deg, #3b0764 0%, #831843 45%, #fb7185 100%)" },
+    { id: "slate", label: "Slate", css: "linear-gradient(135deg, #020617 0%, #0f172a 55%, #334155 100%)" },
+    { id: "ocean", label: "Ocean", css: "linear-gradient(135deg, #082f49 0%, #155e75 45%, #22d3ee 100%)" }
+  ];
+
+  function loadWallpaperState() {
+    try {
+      const raw = localStorage.getItem(STORAGE.WALLPAPER);
+      if (!raw) return { kind: "preset", presetId: "default" };
+      return JSON.parse(raw);
+    } catch {
+      return { kind: "preset", presetId: "default" };
+    }
+  }
+
+  function saveWallpaperState(state) {
+    localStorage.setItem(STORAGE.WALLPAPER, JSON.stringify(state));
+  }
+
+  function applyWallpaper(state) {
+    const desk = document.getElementById("desktop");
+    if (state.kind === "preset") {
+      const p = WALL_PRESETS.find(x => x.id === state.presetId) || WALL_PRESETS[0];
+      desk.style.setProperty("--wallpaper", p.css);
+      return;
+    }
+    if (state.kind === "dataurl") {
+      desk.style.setProperty("--wallpaper", `url("${state.dataUrl}")`);
+      return;
+    }
+  }
+
+  // --- VFS ---
+  /** @typedef {{ type:'file', content:string, mtime:number } | { type:'dir', mtime:number }} VfsNode */
+  function emptyVfs() {
+    return {
+      tree: /** @type {Record<string, VfsNode>} */({
+        "/": { type: "dir", mtime: Date.now() }
+      }),
+      trash: /** @type {Array<{ path:string, node:VfsNode, deletedAt:number }>} */([]),
+      snapshots: /** @type {Array<{ ts:number, label:string, tree:Record<string, VfsNode> }>} */([])
+    };
+  }
+
+  function loadVfs() {
+    try {
+      const raw = localStorage.getItem(STORAGE.VFS);
+      if (!raw) return emptyVfs();
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== "object") return emptyVfs();
+      if (!parsed.tree) parsed.tree = { "/": { type: "dir", mtime: Date.now() } };
+      if (!Array.isArray(parsed.trash)) parsed.trash = [];
+      if (!Array.isArray(parsed.snapshots)) parsed.snapshots = [];
+      return parsed;
+    } catch {
+      return emptyVfs();
+    }
+  }
+
+  function saveVfs(vfs) {
+    try {
+      localStorage.setItem(STORAGE.VFS, JSON.stringify(vfs));
+    } catch (e) {
+      toast("Storage full: reduce files or empty trash / delete snapshots.");
+      throw e;
+    }
+  }
+
+  function normPath(p) {
+    if (!p.startsWith("/")) p = "/" + p;
+    return p.replace(/\\/g, "/").replace(/\/+/g, "/");
+  }
+
+  function parentPath(p) {
+    p = normPath(p);
+    const i = p.lastIndexOf("/");
+    if (i <= 0) return "/";
+    return p.slice(0, i) || "/";
+  }
+
+  function vfsList(vfs, dir) {
+    dir = normPath(dir);
+    const prefix = dir === "/" ? "/" : dir + "/";
+    const set = new Set();
+    for (const k of Object.keys(vfs.tree)) {
+      if (k === "/") continue;
+      if (!k.startsWith(prefix)) continue;
+      const rest = k.slice(prefix.length);
+      const seg = rest.split("/")[0];
+      if (!seg) continue;
+      set.add(seg);
+    }
+    return [...set].sort((a,b) => a.localeCompare(b));
+  }
+
+  function vfsReadFile(vfs, path) {
+    path = normPath(path);
+    const n = vfs.tree[path];
+    if (!n || n.type !== "file") throw new Error("Not a file: " + path);
+    return n.content;
+  }
+
+  function vfsWriteFile(vfs, path, content) {
+    path = normPath(path);
+    const par = parentPath(path);
+    if (!vfs.tree[par] || vfs.tree[par].type !== "dir") {
+      vfsEnsureDir(vfs, par);
+    }
+    vfs.tree[path] = { type: "file", content: String(content), mtime: Date.now() };
+  }
+
+  function vfsEnsureDir(vfs, path) {
+    path = normPath(path);
+    if (vfs.tree[path]?.type === "dir") return;
+    const parts = path.split("/").filter(Boolean);
+    let cur = "/";
+    for (const part of parts) {
+      const next = cur === "/" ? `/${part}` : `${cur}/${part}`;
+      if (!vfs.tree[next]) vfs.tree[next] = { type: "dir", mtime: Date.now() };
+      cur = next;
+    }
+  }
+
+  function vfsDelete(vfs, path) {
+    path = normPath(path);
+    if (path === "/") return;
+    const node = vfs.tree[path];
+    if (!node) return;
+    vfs.trash.unshift({ path, node, deletedAt: Date.now() });
+    delete vfs.tree[path];
+    if (node.type === "dir") {
+      for (const k of Object.keys(vfs.tree)) {
+        if (k.startsWith(path + "/")) delete vfs.tree[k];
+      }
+    }
+  }
+
+  function vfsRestoreTrash(vfs, idx) {
+    if (idx < 0 || idx >= vfs.trash.length) return;
+    const item = vfs.trash.splice(idx, 1)[0];
+    if (!item) return;
+    vfs.tree[item.path] = item.node;
+    if (item.node.type === "dir") {
+      // children not tracked separately in trash (delete was recursive); best-effort restore only dir node
+    }
+  }
+
+  function vfsEmptyTrash(vfs) {
+    vfs.trash = [];
+  }
+
+  function vfsSnapshot(vfs, label) {
+    const snap = {
+      ts: Date.now(),
+      label: label || `Snapshot ${new Date().toLocaleString()}`,
+      tree: structuredClone(vfs.tree)
+    };
+    vfs.snapshots.unshift(snap);
+    if (vfs.snapshots.length > 6) vfs.snapshots.length = 6;
+  }
+
+  function vfsRestoreSnapshot(vfs, idx) {
+    const s = vfs.snapshots[idx];
+    if (!s) return;
+    vfs.tree = structuredClone(s.tree);
+  }
+
+  let vfs = loadVfs();
+  function persistVfs() { saveVfs(vfs); }
+
+  // --- Window manager ---
+  let zBase = 1000;
+  const wm = {
+    focused: /** @type {HTMLElement|null} */(null),
+    /** @param {AppDef} app */
+    open(app) {
+      const root = document.getElementById("windows-root");
+      const el = document.createElement("section");
+      el.className = "win";
+      el.dataset.appId = app.id;
+      el.style.width = (app.width ?? 720) + "px";
+      el.style.height = (app.height ?? 480) + "px";
+      el.style.minWidth = (app.minW ?? 280) + "px";
+      el.style.minHeight = (app.minH ?? 160) + "px";
+
+      el.innerHTML = `
+        <header class="win-tb" data-drag="1">
+          <div class="win-title"></div>
+          <div class="win-actions">
+            <button class="win-btn danger" type="button" title="Close" aria-label="Close">×</button>
+          </div>
+        </header>
+        <div class="win-body"></div>
+      `;
+      const title = /** @type {HTMLElement} */(el.querySelector(".win-title"));
+      title.textContent = app.title;
+      const body = /** @type {HTMLElement} */(el.querySelector(".win-body"));
+      const close = /** @type {HTMLButtonElement} */(el.querySelector(".win-btn"));
+
+      root.appendChild(el);
+      bringToFront(el);
+
+      const unmount = app.create({ root: body, win: el, appId: app.id });
+
+      const onDown = (e) => {
+        if (e.target.closest(".win-btn")) return;
+        bringToFront(el);
+      };
+      el.addEventListener("pointerdown", onDown);
+
+      const header = /** @type {HTMLElement} */(el.querySelector(".win-tb"));
+      let drag = null;
+      header.addEventListener("pointerdown", (e) => {
+        if (!(/** @type {HTMLElement} */(e.target)).closest('[data-drag="1"]')) return;
+        if (e.target.closest(".win-btn")) return;
+        drag = { dx: e.clientX - el.offsetLeft, dy: e.clientY - el.offsetTop, id: e.pointerId };
+        try { header.setPointerCapture(e.pointerId); } catch {}
+      });
+      header.addEventListener("pointermove", (e) => {
+        if (!drag || drag.id !== e.pointerId) return;
+        const nx = e.clientX - drag.dx;
+        const ny = e.clientY - drag.dy;
+        el.style.left = `${clamp(nx, 8, window.innerWidth - el.offsetWidth - 8)}px`;
+        el.style.top = `${clamp(ny, 8, window.innerHeight - el.offsetHeight - 8)}px`;
+        el.style.right = "auto";
+        el.style.bottom = "auto";
+      });
+      header.addEventListener("pointerup", (e) => {
+        if (drag && drag.id === e.pointerId) drag = null;
+        try { header.releasePointerCapture(e.pointerId); } catch {}
+      });
+
+      close.addEventListener("click", () => {
+        try { unmount?.destroy?.(); } catch {}
+        el.remove();
+        if (wm.focused === el) wm.focused = null;
+      });
+
+      // initial offset cascade
+      const opens = root.querySelectorAll(".win").length;
+      el.style.left = `${60 + (opens - 1) * 26}px`;
+      el.style.top = `${40 + (opens - 1) * 22}px`;
+
+      return el;
+    }
+  };
+
+  function bringToFront(el) {
+    zBase += 2;
+    el.style.zIndex = String(zBase);
+    for (const w of document.querySelectorAll("#windows-root .win")) w.classList.toggle("focused", w === el);
+    wm.focused = el;
+  }
+
+  /** @type {AppDef[]} */
+  const APPS = [
+    {
+      id: "vice",
+      title: "Vice City Lite",
+      icon: "🚗",
+      width: 860,
+      height: 560,
+      minW: 640,
+      minH: 400,
+      create: ({ root }) => createViceCityGame(root)
+    },
+    {
+      id: "tunnel",
+      title: "Hyper Tunnel",
+      icon: "🛸",
+      width: 820,
+      height: 540,
+      minW: 640,
+      minH: 400,
+      create: ({ root }) => createTunnelGame(root)
+    },
+    {
+      id: "wallpaper",
+      title: "Wallpaper",
+      icon: "🖼️",
+      width: 560,
+      height: 460,
+      create: ({ root }) => createWallpaperApp(root)
+    },
+    {
+      id: "notes",
+      title: "Notes",
+      icon: "📝",
+      width: 680,
+      height: 620,
+      create: ({ root }) => createNotesApp(root)
+    },
+    {
+      id: "calc",
+      title: "Calculator",
+      icon: "🔢",
+      width: 400,
+      height: 520,
+      minW: 340,
+      minH: 420,
+      create: (ctx) => createCalcApp(ctx)
+    }
+  ];
+
+  function findApp(id) {
+    return APPS.find(a => a.id === id);
+  }
+
+  function createWallpaperApp(root) {
+    const host = document.createElement("div");
+    host.className = "panel";
+    const st = loadWallpaperState();
+
+    host.innerHTML = `
+      <div class="muted">Pick a preset (persisted) or load an image. Large photos may be session-only to avoid storage quota.</div>
+      <div class="wall-grid" id="wall-grid"></div>
+      <div class="row" style="margin-top:12px">
+        <input class="input" id="wall-file" type="file" accept="image/*" />
+      </div>
+      <p class="muted" style="margin-top:10px">
+        Uploads under ~600KB can be saved in <span class="mono">localStorage</span> as a data URL. Bigger images apply for this session only.
+      </p>
+    `;
+    root.appendChild(host);
+
+    const grid = /** @type {HTMLElement} */(host.querySelector("#wall-grid"));
+    function renderTiles() {
+      grid.innerHTML = "";
+      const current = loadWallpaperState();
+      for (const p of WALL_PRESETS) {
+        const t = document.createElement("button");
+        t.type = "button";
+        t.className = "wall-tile";
+        t.style.background = p.css;
+        t.title = p.label;
+        if (current.kind === "preset" && current.presetId === p.id) t.classList.add("active");
+        t.addEventListener("click", () => {
+          const state = { kind: "preset", presetId: p.id };
+          saveWallpaperState(state);
+          applyWallpaper(state);
+          renderTiles();
+        });
+        grid.appendChild(t);
+      }
+    }
+    renderTiles();
+
+    const file = /** @type {HTMLInputElement} */(host.querySelector("#wall-file"));
+    file.addEventListener("change", async () => {
+      const f = file.files?.[0];
+      if (!f) return;
+      const buf = await f.arrayBuffer();
+      if (buf.byteLength > 1200 * 1024) {
+        toast("Image too large; pick a smaller file.");
+        return;
+      }
+      const blob = new Blob([buf], { type: f.type || "image/png" });
+      const url = URL.createObjectURL(blob);
+      const tryDataUrl = buf.byteLength <= 600 * 1024;
+      if (tryDataUrl) {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const dataUrl = String(reader.result || "");
+          const state = { kind: "dataurl", dataUrl };
+          saveWallpaperState(state);
+          applyWallpaper(state);
+          renderTiles();
+          URL.revokeObjectURL(url);
+        };
+        reader.readAsDataURL(blob);
+      } else {
+        applyWallpaper({ kind: "dataurl", dataUrl: url });
+        saveWallpaperState({ kind: "preset", presetId: "default" });
+        toast("Large image applied for this session only (not saved).");
+        renderTiles();
+      }
+    });
+
+    return { destroy() { root.removeChild(host); } };
+  }
+
+  function createNotesApp(root) {
+    const host = document.createElement("div");
+    host.className = "panel";
+    vfs = loadVfs();
+    vfsEnsureDir(vfs, "/Documents");
+
+    host.innerHTML = `
+      <div class="row" style="margin-bottom:10px">
+        <label class="muted">Path</label>
+        <input class="input" id="n-path" style="flex:1;min-width:220px" value="/Documents/notes.txt" spellcheck="false" />
+        <button class="btn primary" id="n-open" type="button">Open</button>
+        <button class="btn primary" id="n-save" type="button">Save</button>
+        <button class="btn" id="n-del" type="button" title="Move current path to Trash">Trash</button>
+      </div>
+      <textarea class="input" id="n-ta" spellcheck="false"></textarea>
+      <div class="vfs-tools">
+        <button class="btn" id="n-trash" type="button">Empty trash</button>
+        <button class="btn" id="n-snap" type="button">Take VFS snapshot</button>
+      </div>
+      <details class="about-box" open>
+        <summary>Trash (restore)</summary>
+        <div id="n-trash-list" class="vfs-list mono muted">Empty</div>
+      </details>
+      <details class="about-box">
+        <summary>Snapshots (rollback)</summary>
+        <div id="n-snap-list" class="vfs-list muted">None</div>
+      </details>
+      <details class="about-box">
+        <summary>Virtual FS</summary>
+        <p class="muted" style="margin:8px 0 0">
+          Files live in <span class="mono">localStorage</span> under one JSON blob. <strong>Trash</strong> keeps deleted nodes until restored or emptied.
+          <strong>Snapshots</strong> keep up to 6 rolling copies of the full file tree for rollback.
+        </p>
+      </details>
+    `;
+    root.appendChild(host);
+
+    const ta = /** @type {HTMLTextAreaElement} */(host.querySelector("#n-ta"));
+    const pathEl = /** @type {HTMLInputElement} */(host.querySelector("#n-path"));
+    const trashListEl = /** @type {HTMLElement} */(host.querySelector("#n-trash-list"));
+    const snapListEl = /** @type {HTMLElement} */(host.querySelector("#n-snap-list"));
+
+    function renderTrashSnap() {
+      vfs = loadVfs();
+      if (!vfs.trash.length) {
+        trashListEl.textContent = "Empty";
+      } else {
+        trashListEl.innerHTML = "";
+        vfs.trash.forEach((item, idx) => {
+          const row = document.createElement("div");
+          row.className = "vfs-row";
+          row.innerHTML = `<span class="path mono" title="${item.path}">${item.path}</span>`;
+          const rb = document.createElement("button");
+          rb.type = "button";
+          rb.className = "btn";
+          rb.textContent = "Restore";
+          rb.addEventListener("click", () => {
+            vfs = loadVfs();
+            const ri = vfs.trash.findIndex((x) => x.path === item.path && x.deletedAt === item.deletedAt);
+            if (ri >= 0) vfsRestoreTrash(vfs, ri);
+            persistVfs();
+            renderTrashSnap();
+            refreshOpen();
+            toast("Restored from Trash.");
+          });
+          row.appendChild(rb);
+          trashListEl.appendChild(row);
+        });
+      }
+      if (!vfs.snapshots.length) {
+        snapListEl.textContent = "None";
+      } else {
+        snapListEl.innerHTML = "";
+        vfs.snapshots.forEach((s, idx) => {
+          const row = document.createElement("div");
+          row.className = "vfs-row";
+          const label = new Date(s.ts).toLocaleString() + " — " + s.label;
+          row.innerHTML = `<span class="path" title="${label}">${label}</span>`;
+          const rb = document.createElement("button");
+          rb.type = "button";
+          rb.className = "btn";
+          rb.textContent = "Restore";
+          rb.addEventListener("click", () => {
+            vfs = loadVfs();
+            vfsRestoreSnapshot(vfs, idx);
+            persistVfs();
+            renderTrashSnap();
+            refreshOpen();
+            toast("Snapshot restored.");
+          });
+          row.appendChild(rb);
+          snapListEl.appendChild(row);
+        });
+      }
+    }
+
+    function refreshOpen() {
+      vfs = loadVfs();
+      try {
+        ta.value = vfsReadFile(vfs, pathEl.value.trim());
+      } catch {
+        ta.value = "";
+      }
+    }
+    refreshOpen();
+    renderTrashSnap();
+
+    host.querySelector("#n-open")?.addEventListener("click", refreshOpen);
+    host.querySelector("#n-save")?.addEventListener("click", () => {
+      vfs = loadVfs();
+      vfsEnsureDir(vfs, "/Documents");
+      try {
+        vfsWriteFile(vfs, pathEl.value.trim(), ta.value);
+        persistVfs();
+        renderTrashSnap();
+        toast("Saved.");
+      } catch (e) {
+        console.error(e);
+      }
+    });
+    host.querySelector("#n-del")?.addEventListener("click", () => {
+      const p = pathEl.value.trim();
+      if (!p || p === "/") return;
+      vfs = loadVfs();
+      if (!vfs.tree[p]) {
+        toast("Nothing at that path.");
+        return;
+      }
+      vfsDelete(vfs, p);
+      persistVfs();
+      renderTrashSnap();
+      refreshOpen();
+      toast("Moved to Trash.");
+    });
+    host.querySelector("#n-trash")?.addEventListener("click", () => {
+      vfs = loadVfs();
+      vfsEmptyTrash(vfs);
+      persistVfs();
+      renderTrashSnap();
+      toast("Trash emptied.");
+    });
+    host.querySelector("#n-snap")?.addEventListener("click", () => {
+      vfs = loadVfs();
+      vfsSnapshot(vfs, "");
+      persistVfs();
+      renderTrashSnap();
+      toast("Snapshot saved (max 6).");
+    });
+
+    return { destroy() { root.removeChild(host); } };
+  }
+
+  function createCalcApp(/** @type {MountCtx} */ { root, win }) {
+    const host = document.createElement("div");
+    host.className = "panel";
+    host.innerHTML = `
+      <div class="muted">Keyboard supported. <span class="kbd">Esc</span> clears.</div>
+      <div class="calc-display" id="c-display" aria-live="polite">0</div>
+      <div class="calc-grid" id="c-grid"></div>
+    `;
+    root.appendChild(host);
+    const display = /** @type {HTMLElement} */(host.querySelector("#c-display"));
+    const grid = /** @type {HTMLElement} */(host.querySelector("#c-grid"));
+
+    let cur = "0";
+    let acc = null;
+    let op = null;
+    let fresh = true;
+
+    function render() {
+      display.textContent = cur.replace(/\.0+$/, (m) => (m === ".0" ? "" : m)) || "0";
+    }
+
+    function num(n) {
+      if (fresh) {
+        cur = n;
+        fresh = false;
+      } else {
+        cur = cur === "0" && !cur.includes(".") ? n : cur + n;
+      }
+      render();
+    }
+
+    function dot() {
+      if (fresh) {
+        cur = "0.";
+        fresh = false;
+      } else if (!cur.includes(".")) cur += ".";
+      render();
+    }
+
+    function applyOp(next) {
+      const v = parseFloat(cur);
+      if (acc === null || op === null) {
+        acc = v;
+      } else {
+        acc = compute(acc, op, v);
+      }
+      op = next;
+      cur = String(acc);
+      fresh = true;
+      render();
+    }
+
+    function compute(a, o, b) {
+      if (o === "+") return a + b;
+      if (o === "-") return a - b;
+      if (o === "*") return a * b;
+      if (o === "/") return b === 0 ? NaN : a / b;
+      return b;
+    }
+
+    function eq() {
+      if (op === null || acc === null) return;
+      const v = parseFloat(cur);
+      acc = compute(acc, op, v);
+      op = null;
+      cur = String(+acc.toFixed(8)).replace(/\.?0+$/, "");
+      acc = null;
+      fresh = true;
+      render();
+    }
+
+    function clr() {
+      cur = "0";
+      acc = null;
+      op = null;
+      fresh = true;
+      render();
+    }
+
+    const keys = [
+      ["7","8","9","/"],
+      ["4","5","6","*"],
+      ["1","2","3","-"],
+      ["0",".","=","+"]
+    ];
+
+    for (const row of keys) {
+      for (const k of row) {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.textContent = k;
+        b.addEventListener("click", () => press(k));
+        grid.appendChild(b);
+      }
+    }
+
+    function press(k) {
+      if (/[0-9]/.test(k)) return num(k);
+      if (k === ".") return dot();
+      if (k === "=") return eq();
+      if ("+-*/".includes(k)) return applyOp(k);
+    }
+
+    function onKeyDown(e) {
+      if (!root.isConnected) return;
+      if (!win.classList.contains("focused")) return;
+      const t = e.key;
+      if (t >= "0" && t <= "9") return num(t);
+      if (t === "." ) return dot();
+      if (t === "+" || t === "-" || t === "*" || t === "/") return applyOp(t);
+      if (t === "Enter" || t === "=") return eq();
+      if (t === "Escape") return clr();
+      if (t === "Backspace") {
+        if (fresh) return;
+        cur = cur.length > 1 ? cur.slice(0, -1) : "0";
+        render();
+      }
+    }
+
+    window.addEventListener("keydown", onKeyDown);
+    render();
+
+    return {
+      destroy() {
+        window.removeEventListener("keydown", onKeyDown);
+        root.removeChild(host);
+      }
+    };
+  }
+
+  /** @param {HTMLElement} root */
+  function createViceCityGame(root) {
+    const wrap = document.createElement("div");
+    wrap.style.height = "100%";
+    wrap.style.position = "relative";
+    root.appendChild(wrap);
+
+    const hud = document.createElement("div");
+    hud.className = "hud";
+    hud.innerHTML = `<div><strong>Vice City Lite</strong></div>
+      <div><span class="kbd">W</span>/<span class="kbd">S</span> throttle · <span class="kbd">A</span>/<span class="kbd">D</span> steer · <span class="kbd">Space</span> brake</div>
+      <div id="vice-mission" style="margin-top:6px;color:#93c5fd">Pickups: 0 / 8</div>`;
+    wrap.appendChild(hud);
+    const missionEl = /** @type {HTMLElement} */(hud.querySelector("#vice-mission"));
+
+    const canvas = document.createElement("canvas");
+    canvas.className = "os-canvas";
+    wrap.appendChild(canvas);
+
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x87b6ff);
+    scene.fog = new THREE.Fog(0xb6d6ff, 60, 160);
+
+    const camera = new THREE.PerspectiveCamera(62, 1, 0.1, 500);
+    camera.position.set(0, 10, 16);
+
+    const hemi = new THREE.HemisphereLight(0xffffff, 0x223344, 0.9);
+    scene.add(hemi);
+    const sun = new THREE.DirectionalLight(0xffffff, 1.05);
+    sun.position.set(30, 60, 20);
+    scene.add(sun);
+
+    const ground = new THREE.Mesh(
+      new THREE.PlaneGeometry(260, 260),
+      new THREE.MeshStandardMaterial({ color: 0x2f6f4b, roughness: 1, metalness: 0 })
+    );
+    ground.rotation.x = -Math.PI / 2;
+    scene.add(ground);
+
+    // Roads: two crossing bands
+    const roadMat = new THREE.MeshStandardMaterial({ color: 0x2b2f3a, roughness: 0.95 });
+    const road1 = new THREE.Mesh(new THREE.PlaneGeometry(24, 220), roadMat);
+    road1.rotation.x = -Math.PI / 2;
+    road1.position.y = 0.02;
+    scene.add(road1);
+    const road2 = new THREE.Mesh(new THREE.PlaneGeometry(220, 24), roadMat);
+    road2.rotation.x = -Math.PI / 2;
+    road2.position.y = 0.021;
+    scene.add(road2);
+
+    const bldgMat = new THREE.MeshStandardMaterial({ color: 0xb7c0d6, roughness: 0.85 });
+    const buildings = [];
+    const block = 18;
+    for (let gx = -4; gx <= 4; gx++) {
+      for (let gz = -4; gz <= 4; gz++) {
+        if (Math.abs(gx) <= 0 || Math.abs(gz) <= 0) continue; // leave road intersection
+        if (Math.random() < 0.12) continue;
+        const w = 6 + Math.random() * 8;
+        const d = 6 + Math.random() * 8;
+        const h = 8 + Math.random() * 18;
+        const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), bldgMat.clone());
+        mesh.material.color.offsetHSL(0, 0, (Math.random() - 0.5) * 0.08);
+        mesh.position.set(gx * block + (Math.random() - 0.5) * 4, h / 2, gz * block + (Math.random() - 0.5) * 4);
+        scene.add(mesh);
+        buildings.push({ mesh, w, d, x: mesh.position.x, z: mesh.position.z });
+      }
+    }
+
+    // Boundary curbs (invisible walls as AABB outside play)
+    const LIMIT = 115;
+
+    // Car group
+    const car = new THREE.Group();
+    const body = new THREE.Mesh(
+      new THREE.BoxGeometry(2.1, 0.7, 4.2),
+      new THREE.MeshStandardMaterial({ color: 0xd43b3b, metalness: 0.25, roughness: 0.55 })
+    );
+    body.position.y = 0.65;
+    car.add(body);
+    const roof = new THREE.Mesh(
+      new THREE.BoxGeometry(1.7, 0.6, 2.4),
+      new THREE.MeshStandardMaterial({ color: 0x111827, roughness: 0.65 })
+    );
+    roof.position.y = 1.25;
+    roof.position.z = -0.2;
+    car.add(roof);
+    car.position.set(0, 0.01, 8);
+    scene.add(car);
+
+    let yaw = Math.PI;
+    let speed = 0;
+    const accel = 26;
+    const steer = 2.6;
+    const friction = 0.94;
+    const keys = Object.create(null);
+    function kd(e) { keys[e.code] = true; if (["Space","ArrowUp","ArrowDown","ArrowLeft","ArrowRight"].includes(e.code)) e.preventDefault(); }
+    function ku(e) { keys[e.code] = false; }
+    window.addEventListener("keydown", kd);
+    window.addEventListener("keyup", ku);
+
+    // Pickups
+    const pickupGroup = new THREE.Group();
+    scene.add(pickupGroup);
+    const cylGeo = new THREE.CylinderGeometry(0.55, 0.55, 0.35, 16);
+    const cylMat = new THREE.MeshStandardMaterial({ color: 0xfbbf24, emissive: 0xf59e0b, emissiveIntensity: 0.55 });
+    const pickups = [];
+    function spawnPickups() {
+      for (let i = pickupGroup.children.length - 1; i >= 0; i--) pickupGroup.remove(pickupGroup.children[i]);
+      pickups.length = 0;
+      let n = 0;
+      while (n < 8) {
+        const x = (Math.random() * 2 - 1) * 90;
+        const z = (Math.random() * 2 - 1) * 90;
+        if (Math.abs(x) < 16 && Math.abs(z) < 16) continue;
+        const m = new THREE.Mesh(cylGeo, cylMat);
+        m.position.set(x, 0.35, z);
+        m.rotation.x = Math.PI / 2;
+        pickupGroup.add(m);
+        pickups.push(m);
+        n++;
+      }
+    }
+    spawnPickups();
+    let collected = 0;
+
+    function aabbXZ(cx, cz, hw, hd, bx, bz, bw, bd) {
+      return Math.abs(cx - bx) < (hw + bw) / 2 && Math.abs(cz - bz) < (hd + bd) / 2;
+    }
+
+    let raf = 0;
+    const clock = new THREE.Clock();
+    function resize() {
+      const w = wrap.clientWidth || 640;
+      const h = wrap.clientHeight || 400;
+      renderer.setSize(w, h, false);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+    }
+    resize();
+    const ro = new ResizeObserver(resize);
+    ro.observe(wrap);
+
+    function tick() {
+      raf = requestAnimationFrame(tick);
+      const dt = Math.min(0.05, clock.getDelta());
+
+      const fwd = new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw));
+
+      if (keys["KeyW"]) speed += accel * dt;
+      if (keys["KeyS"]) speed -= accel * dt;
+      if (keys["Space"]) speed *= 0.78;
+      speed *= friction;
+
+      const mx = Math.abs(fwd.x) > Math.abs(fwd.z) ? Math.abs(fwd.x) : Math.abs(fwd.z);
+      const steerAmt = steer * dt * clamp(Math.abs(speed) / 18, 0, 1);
+      if (keys["KeyA"]) yaw += steerAmt;
+      if (keys["KeyD"]) yaw -= steerAmt;
+
+      let nx = car.position.x + fwd.x * speed * dt;
+      let nz = car.position.z + fwd.z * speed * dt;
+
+      // boundary
+      nx = clamp(nx, -LIMIT, LIMIT);
+      nz = clamp(nz, -LIMIT, LIMIT);
+
+      // building collision (simple AABB on car center)
+      const cw = 2.0, cd = 4.0;
+      for (const b of buildings) {
+        if (aabbXZ(nx, nz, cw, cd, b.x, b.z, b.w + 1.2, b.d + 1.2)) {
+          // push out
+          nx = car.position.x;
+          nz = car.position.z;
+          speed *= -0.35;
+          break;
+        }
+      }
+
+      car.position.x = nx;
+      car.position.z = nz;
+      car.rotation.y = yaw;
+
+      // pickups
+      for (let i = pickups.length - 1; i >= 0; i--) {
+        const p = pickups[i];
+        const dx = p.position.x - car.position.x;
+        const dz = p.position.z - car.position.z;
+        if (dx * dx + dz * dz < 3.2 * 3.2) {
+          pickupGroup.remove(p);
+          pickups.splice(i, 1);
+          collected++;
+          missionEl.textContent = `Pickups: ${collected} / 8`;
+          if (pickups.length === 0) {
+            toast("District cleared! Respawning pickups…");
+            collected = 0;
+            spawnPickups();
+            missionEl.textContent = `Pickups: ${collected} / 8`;
+          }
+        }
+        p.rotation.z += dt * 1.2;
+      }
+
+      // Chase camera
+      const off = fwd.clone().multiplyScalar(-14).add(new THREE.Vector3(0, 7, 0));
+      const target = car.position.clone().add(new THREE.Vector3(0, 1.6, 0));
+      camera.position.lerp(car.position.clone().add(off), 0.12);
+      camera.lookAt(target);
+
+      renderer.render(scene, camera);
+    }
+    tick();
+
+    return {
+      destroy() {
+        cancelAnimationFrame(raf);
+        window.removeEventListener("keydown", kd);
+        window.removeEventListener("keyup", ku);
+        ro.disconnect();
+        renderer.dispose();
+        scene.traverse((o) => {
+          const m = /** @type {any} */(o);
+          if (m.geometry) m.geometry.dispose?.();
+          if (m.material) {
+            if (Array.isArray(m.material)) m.material.forEach((x) => x.dispose?.());
+            else m.material.dispose?.();
+          }
+        });
+        root.removeChild(wrap);
+      }
+    };
+  }
+
+  /** @param {HTMLElement} root */
+  function createTunnelGame(root) {
+    const wrap = document.createElement("div");
+    wrap.style.height = "100%";
+    wrap.style.position = "relative";
+    root.appendChild(wrap);
+
+    const hud = document.createElement("div");
+    hud.className = "hud";
+    hud.innerHTML = `<div><strong>Hyper Tunnel</strong></div>
+      <div>Arrow keys · dodge random <strong>torus rings</strong> & debris</div>
+      <div id="t-score" style="margin-top:6px;color:#a7f3d0">Score: 0 · Best: 0</div>
+      <div id="t-help" style="margin-top:6px;color:#fecdd3;display:none">Crashed — press R</div>`;
+    wrap.appendChild(hud);
+    const scoreEl = /** @type {HTMLElement} */(hud.querySelector("#t-score"));
+    const helpEl = /** @type {HTMLElement} */(hud.querySelector("#t-help"));
+
+    const canvas = document.createElement("canvas");
+    canvas.className = "os-canvas";
+    canvas.tabIndex = 0;
+    wrap.appendChild(canvas);
+
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x020617);
+    scene.fog = new THREE.Fog(0x020617, 18, 95);
+
+    const camera = new THREE.PerspectiveCamera(72, 1, 0.1, 200);
+
+    const tunnel = new THREE.Mesh(
+      new THREE.CylinderGeometry(14, 14, 260, 32, 1, true),
+      new THREE.MeshStandardMaterial({ color: 0x0b1224, side: THREE.BackSide, roughness: 0.95 })
+    );
+    tunnel.rotation.z = Math.PI / 2;
+    scene.add(tunnel);
+
+    const rim = new THREE.PointLight(0x60a5fa, 1.3, 120);
+    rim.position.set(0, 0, 10);
+    scene.add(rim);
+    const keyl = new THREE.DirectionalLight(0xdbeafe, 0.65);
+    keyl.position.set(0.2, 0.2, 1);
+    scene.add(keyl);
+
+    const ship = new THREE.Group();
+    const body = new THREE.Mesh(
+      new THREE.ConeGeometry(0.55, 1.4, 12),
+      new THREE.MeshStandardMaterial({ color: 0x38bdf8, metalness: 0.35, roughness: 0.35 })
+    );
+    body.rotation.x = Math.PI / 2;
+    ship.add(body);
+    ship.position.set(0, 0, 8);
+    scene.add(ship);
+
+    const obstacles = [];
+    const obsMat = new THREE.MeshStandardMaterial({ color: 0xf97316, emissive: 0xea580c, emissiveIntensity: 0.35, roughness: 0.55 });
+    const ringMat = new THREE.MeshStandardMaterial({ color: 0xc4b5fd, emissive: 0x7c3aed, emissiveIntensity: 0.32, roughness: 0.45, metalness: 0.15 });
+    function spawnObs(z) {
+      const useRing = Math.random() < 0.58;
+      /** @type {THREE.Mesh} */
+      let mesh;
+      if (useRing) {
+        mesh = new THREE.Mesh(
+          new THREE.TorusGeometry(2.1 + Math.random() * 1.4, 0.32, 12, 28),
+          ringMat.clone()
+        );
+        mesh.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI);
+      } else {
+        mesh = new THREE.Mesh(new THREE.IcosahedronGeometry(0.85 + Math.random() * 0.55, 0), obsMat.clone());
+      }
+      const ang = Math.random() * Math.PI * 2;
+      const rad = 4 + Math.random() * 7;
+      mesh.position.set(Math.cos(ang) * rad, Math.sin(ang) * rad, z);
+      scene.add(mesh);
+      obstacles.push({ mesh, vz: 18 + Math.random() * 10 });
+    }
+
+    for (let i = 0; i < 28; i++) spawnObs(-10 - i * 8);
+
+    let px = 0, py = 0;
+    let alive = true;
+    let score = 0;
+    let best = Number(localStorage.getItem("browseros_tunnel_best") || "0") || 0;
+
+    const keys = Object.create(null);
+    function kd(e) {
+      keys[e.code] = true;
+      if (["ArrowUp","ArrowDown","ArrowLeft","ArrowRight","Space"].includes(e.code)) e.preventDefault();
+      if (!alive && e.code === "KeyR") resetRun();
+    }
+    function ku(e) { keys[e.code] = false; }
+    window.addEventListener("keydown", kd);
+    window.addEventListener("keyup", ku);
+
+    let raf = 0;
+    const clock = new THREE.Clock();
+
+    function disposeMesh(mesh) {
+      mesh.geometry?.dispose?.();
+      const m = mesh.material;
+      if (Array.isArray(m)) m.forEach((x) => x.dispose?.());
+      else m?.dispose?.();
+    }
+
+    function resetRun() {
+      alive = true;
+      helpEl.style.display = "none";
+      px = py = 0;
+      ship.position.x = ship.position.y = 0;
+      score = 0;
+      for (const o of obstacles) {
+        disposeMesh(o.mesh);
+        scene.remove(o.mesh);
+      }
+      obstacles.length = 0;
+      for (let i = 0; i < 28; i++) spawnObs(-10 - i * 8);
+      clock.getDelta();
+    }
+
+    function resize() {
+      const w = wrap.clientWidth || 640;
+      const h = wrap.clientHeight || 400;
+      renderer.setSize(w, h, false);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+    }
+    resize();
+    const ro = new ResizeObserver(resize);
+    ro.observe(wrap);
+
+    function tick() {
+      raf = requestAnimationFrame(tick);
+      const dt = Math.min(0.05, clock.getDelta());
+
+      const sp = 32;
+      if (keys["ArrowLeft"]) px -= sp * dt;
+      if (keys["ArrowRight"]) px += sp * dt;
+      if (keys["ArrowUp"]) py += sp * dt;
+      if (keys["ArrowDown"]) py -= sp * dt;
+
+      px = clamp(px, -11, 11);
+      py = clamp(py, -11, 11);
+      ship.position.x = px;
+      ship.position.y = py;
+
+      tunnel.rotation.x += dt * 0.05;
+
+      if (alive) {
+        score += dt * 12;
+        if (score > best) {
+          best = score;
+          localStorage.setItem("browseros_tunnel_best", String(Math.floor(best)));
+        }
+        scoreEl.textContent = `Score: ${Math.floor(score)} · Best: ${Math.floor(best)}`;
+
+        for (let i = obstacles.length - 1; i >= 0; i--) {
+          const o = obstacles[i];
+          o.mesh.position.z += (o.vz + score * 0.02) * dt;
+          o.mesh.rotation.x += dt * 1.1;
+          o.mesh.rotation.y += dt * 0.9;
+          const dx = o.mesh.position.x - px;
+          const dy = o.mesh.position.y - py;
+          const dz = o.mesh.position.z - ship.position.z;
+          if (Math.sqrt(dx * dx + dy * dy + dz * dz) < 1.45) {
+            alive = false;
+            helpEl.style.display = "block";
+          }
+          if (o.mesh.position.z > 16) {
+            disposeMesh(o.mesh);
+            scene.remove(o.mesh);
+            obstacles.splice(i, 1);
+            spawnObs(-90 - Math.random() * 30);
+          }
+        }
+      }
+
+      camera.position.set(0, 0, 18);
+      camera.lookAt(0, 0, -40);
+
+      renderer.render(scene, camera);
+    }
+    resetRun();
+    tick();
+    queueMicrotask(() => canvas.focus());
+
+    return {
+      destroy() {
+        cancelAnimationFrame(raf);
+        window.removeEventListener("keydown", kd);
+        window.removeEventListener("keyup", ku);
+        ro.disconnect();
+        renderer.dispose();
+        scene.traverse((o) => {
+          const m = /** @type {any} */(o);
+          if (m.geometry) m.geometry.dispose?.();
+          if (m.material) {
+            if (Array.isArray(m.material)) m.material.forEach((x) => x.dispose?.());
+            else m.material.dispose?.();
+          }
+        });
+        root.removeChild(wrap);
+      }
+    };
+  }
+
+  function createAboutPanel(root) {
+    const host = document.createElement("div");
+    host.className = "panel";
+    host.innerHTML = `
+      <h2 style="margin:0 0 10px;font-size:18px">Browser OS</h2>
+      <p class="muted">
+        Single-file faux desktop for Chrome: draggable windows, wallpaper persistence, Notes backed by a Virtual File System,
+        two WebGL games (Vice City Lite + Hyper Tunnel), and a calculator.
+      </p>
+      <details class="about-box" open>
+        <summary>Special feature — Virtual File System</summary>
+        <p class="muted" style="margin:8px 0 0">
+          A tiny FS stored in <span class="mono">localStorage</span>: create paths like <span class="mono">/Documents/notes.txt</span>,
+          delete to Trash, empty trash, snapshots (up to 6). This turns the page into a persistent “OS-like” surface instead of a static toy.
+        </p>
+      </details>
+      <details class="about-box">
+        <summary>Limits</summary>
+        <p class="muted" style="margin:8px 0 0">
+          Browsers typically cap <span class="mono">localStorage</span> around 5MB. Huge images may be session-only. Three.js loads from a CDN — open this file online for 3D.
+        </p>
+      </details>
+      <p class="muted" style="margin-top:12px">
+        Open source vibe: everything is embedded in <span class="mono">browser-os.html</span>.
+      </p>
+    `;
+    root.appendChild(host);
+    return { destroy() { root.removeChild(host); } };
+  }
+
+  // Boot
+  applyWallpaper(loadWallpaperState());
+
+  function clockTick() {
+    const el = document.getElementById("clock");
+    const d = new Date();
+    el.textContent = d.toLocaleString(undefined, { weekday: "short", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  }
+  clockTick();
+  setInterval(clockTick, 1000);
+
+  const iconGrid = document.getElementById("icon-grid");
+  for (const app of APPS) {
+    const ic = document.createElement("div");
+    ic.className = "d-icon";
+    ic.innerHTML = `<div class="glyph" aria-hidden="true">${app.icon}</div><div class="label">${app.title}</div>`;
+    ic.addEventListener("click", () => wm.open(app));
+    ic.title = app.title;
+    iconGrid.appendChild(ic);
+  }
+
+  const startBtn = document.getElementById("start-btn");
+  const startMenu = document.getElementById("start-menu");
+  startBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const open = !startMenu.classList.contains("open");
+    startMenu.classList.toggle("open", open);
+    startBtn.setAttribute("aria-expanded", String(open));
+  });
+  window.addEventListener("pointerdown", () => {
+    startMenu.classList.remove("open");
+    startBtn.setAttribute("aria-expanded", "false");
+  });
+  startMenu.addEventListener("pointerdown", (e) => e.stopPropagation());
+
+  startMenu.querySelectorAll(".sm-row").forEach((row) => {
+    row.addEventListener("click", () => {
+      const action = /** @type {HTMLElement} */(row).dataset.action;
+      startMenu.classList.remove("open");
+      if (action === "about") {
+        wm.open({ id: "about", title: "About Browser OS", icon: "ℹ️", width: 560, height: 520, create: ({ root }) => createAboutPanel(root) });
+      }
+      if (action === "reload") location.reload();
+    });
+  });
+
+  // Expose minimal API for debugging
+  globalThis.__BrowserOS = { vfs: () => vfs, loadVfs, persistVfs };
+  </script>
+</body>
+</html>
