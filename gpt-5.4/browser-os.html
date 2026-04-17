@@ -1,0 +1,2115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Browser OS - GPT-5.4</title>
+  <style>
+    :root {
+      --taskbar-height: 64px;
+      --glass: rgba(8, 12, 18, 0.78);
+      --line: rgba(255, 255, 255, 0.12);
+      --text: #eef2ff;
+      --muted: rgba(238, 242, 255, 0.72);
+      --accent: #ffb703;
+      --accent-2: #6ee7f9;
+      --danger: #fb7185;
+      --success: #7ce38b;
+      --shadow: 0 24px 80px rgba(0, 0, 0, 0.42);
+      --radius: 22px;
+      --wallpaper: radial-gradient(circle at top left, #28536b 0%, #0f172a 45%, #020617 100%);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      margin: 0;
+      height: 100%;
+      overflow: hidden;
+      background: #020617;
+      color: var(--text);
+      font-family: "Avenir Next", "Trebuchet MS", sans-serif;
+    }
+
+    button,
+    input,
+    textarea,
+    select {
+      font: inherit;
+    }
+
+    #desktop {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      background: var(--wallpaper);
+      transition: background 0.45s ease;
+      overflow: hidden;
+      isolation: isolate;
+    }
+
+    #desktop::before,
+    #desktop::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+    }
+
+    #desktop::before {
+      background:
+        radial-gradient(circle at 20% 18%, rgba(255, 255, 255, 0.18), transparent 24%),
+        radial-gradient(circle at 80% 14%, rgba(255, 255, 255, 0.14), transparent 18%),
+        linear-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+      background-size: auto, auto, 34px 34px, 34px 34px;
+      mix-blend-mode: screen;
+      opacity: 0.34;
+    }
+
+    #desktop::after {
+      background: linear-gradient(to bottom, rgba(255, 255, 255, 0.06), transparent 22%, transparent 76%, rgba(0, 0, 0, 0.3));
+    }
+
+    #desktop-icons {
+      position: absolute;
+      inset: 18px 18px calc(var(--taskbar-height) + 20px) 18px;
+      pointer-events: none;
+    }
+
+    .desktop-icon {
+      position: absolute;
+      width: 92px;
+      pointer-events: auto;
+      text-align: center;
+      cursor: pointer;
+      user-select: none;
+      color: #f8fafc;
+      text-shadow: 0 2px 8px rgba(0, 0, 0, 0.6);
+    }
+
+    .icon-badge {
+      width: 58px;
+      height: 58px;
+      margin: 0 auto 8px;
+      border-radius: 18px;
+      display: grid;
+      place-items: center;
+      background: linear-gradient(145deg, rgba(255, 255, 255, 0.26), rgba(255, 255, 255, 0.08));
+      border: 1px solid rgba(255, 255, 255, 0.25);
+      backdrop-filter: blur(18px);
+      box-shadow: 0 14px 34px rgba(0, 0, 0, 0.22);
+      font-weight: 700;
+      letter-spacing: 0.08em;
+    }
+
+    .desktop-icon span {
+      display: block;
+      font-size: 12px;
+      line-height: 1.2;
+    }
+
+    #window-layer {
+      position: absolute;
+      inset: 0;
+      overflow: hidden;
+    }
+
+    .window {
+      position: absolute;
+      min-width: 320px;
+      min-height: 220px;
+      width: min(740px, calc(100vw - 40px));
+      height: min(540px, calc(100vh - 112px));
+      border-radius: var(--radius);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      background: linear-gradient(180deg, rgba(22, 28, 38, 0.96), rgba(8, 12, 18, 0.94));
+      box-shadow: var(--shadow);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      backdrop-filter: blur(18px);
+    }
+
+    .window.active {
+      border-color: rgba(255, 255, 255, 0.28);
+      box-shadow: 0 32px 100px rgba(0, 0, 0, 0.54);
+    }
+
+    .window-header {
+      height: 50px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 14px 0 18px;
+      cursor: move;
+      background: linear-gradient(90deg, rgba(255, 183, 3, 0.18), rgba(110, 231, 249, 0.12));
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .window-title {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 14px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .window-badge {
+      width: 28px;
+      height: 28px;
+      border-radius: 10px;
+      display: grid;
+      place-items: center;
+      background: rgba(255, 255, 255, 0.14);
+      border: 1px solid rgba(255, 255, 255, 0.22);
+      font-size: 11px;
+    }
+
+    .window-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .window-actions button {
+      width: 34px;
+      height: 34px;
+      border-radius: 10px;
+      border: 0;
+      background: rgba(255, 255, 255, 0.1);
+      color: var(--text);
+      cursor: pointer;
+    }
+
+    .window-actions button:hover {
+      background: rgba(255, 255, 255, 0.18);
+    }
+
+    .window-body {
+      flex: 1;
+      overflow: auto;
+      padding: 18px;
+    }
+
+    .panel-grid {
+      display: grid;
+      gap: 16px;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    }
+
+    .panel {
+      border-radius: 18px;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      background: rgba(255, 255, 255, 0.05);
+      padding: 16px;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    }
+
+    .panel h3,
+    .panel h4,
+    .app-header h2,
+    .app-header h3 {
+      margin: 0 0 10px;
+      font-weight: 700;
+    }
+
+    .muted {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .button-row,
+    .chip-row,
+    .swatch-row,
+    .pad-row,
+    .step-row {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .btn,
+    .chip,
+    .wallpaper-swatch,
+    .pad,
+    .step,
+    .tool-btn {
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      background: rgba(255, 255, 255, 0.08);
+      color: var(--text);
+      border-radius: 14px;
+      padding: 10px 14px;
+      cursor: pointer;
+      transition: transform 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+    }
+
+    .btn:hover,
+    .chip:hover,
+    .wallpaper-swatch:hover,
+    .pad:hover,
+    .step:hover,
+    .tool-btn:hover {
+      transform: translateY(-1px);
+      background: rgba(255, 255, 255, 0.14);
+      border-color: rgba(255, 255, 255, 0.24);
+    }
+
+    .btn.primary,
+    .pad.active,
+    .step.active,
+    .tool-btn.active {
+      background: linear-gradient(135deg, rgba(255, 183, 3, 0.34), rgba(110, 231, 249, 0.28));
+      border-color: rgba(255, 255, 255, 0.28);
+    }
+
+    .wallpaper-swatch {
+      min-width: 110px;
+      text-align: left;
+      font-weight: 700;
+    }
+
+    .wallpaper-swatch small {
+      display: block;
+      margin-top: 4px;
+      font-weight: 500;
+      color: var(--muted);
+    }
+
+    .badge-line {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.08);
+      padding: 8px 12px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .activity-list {
+      display: grid;
+      gap: 10px;
+      margin-top: 12px;
+    }
+
+    .activity-item {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.06);
+      padding: 10px 12px;
+      font-size: 13px;
+    }
+
+    .activity-item time {
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    .split-layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1.1fr) minmax(260px, 0.9fr);
+      gap: 16px;
+      height: 100%;
+    }
+
+    .notes-area,
+    .paint-canvas,
+    .music-panel,
+    .game-shell {
+      height: 100%;
+    }
+
+    textarea.notes-editor {
+      width: 100%;
+      height: calc(100% - 56px);
+      resize: none;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 18px;
+      background: rgba(255, 255, 255, 0.06);
+      color: var(--text);
+      padding: 16px;
+      outline: none;
+      line-height: 1.55;
+    }
+
+    .paint-layout,
+    .music-layout,
+    .game-layout {
+      display: grid;
+      grid-template-columns: 230px minmax(0, 1fr);
+      gap: 16px;
+      height: 100%;
+    }
+
+    .paint-canvas,
+    .game-canvas {
+      width: 100%;
+      height: 100%;
+      border-radius: 18px;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      background: rgba(0, 0, 0, 0.32);
+      display: block;
+      touch-action: none;
+    }
+
+    .slider-row {
+      display: grid;
+      gap: 8px;
+      margin-top: 14px;
+    }
+
+    .slider-row input {
+      width: 100%;
+    }
+
+    .color-chip {
+      width: 30px;
+      height: 30px;
+      border-radius: 999px;
+      border: 2px solid rgba(255, 255, 255, 0.5);
+      cursor: pointer;
+    }
+
+    .color-chip.active {
+      box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.22);
+    }
+
+    .hud-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+      gap: 10px;
+      margin-top: 12px;
+    }
+
+    .stat {
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.08);
+      padding: 10px 12px;
+    }
+
+    .stat strong {
+      display: block;
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 4px;
+    }
+
+    .stat span {
+      font-size: 20px;
+      font-weight: 700;
+    }
+
+    .game-layout {
+      grid-template-columns: 260px minmax(0, 1fr);
+    }
+
+    .game-canvas {
+      min-height: 360px;
+    }
+
+    #taskbar {
+      position: absolute;
+      left: 14px;
+      right: 14px;
+      bottom: 14px;
+      height: var(--taskbar-height);
+      border-radius: 22px;
+      background: rgba(6, 10, 16, 0.8);
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      align-items: center;
+      gap: 14px;
+      padding: 0 14px;
+      backdrop-filter: blur(18px);
+      box-shadow: 0 18px 60px rgba(0, 0, 0, 0.28);
+      z-index: 1000;
+    }
+
+    #start-button {
+      min-width: 130px;
+      height: 42px;
+      border-radius: 14px;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      background: linear-gradient(135deg, rgba(255, 183, 3, 0.22), rgba(110, 231, 249, 0.18));
+      color: var(--text);
+      cursor: pointer;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+    }
+
+    #taskbar-apps {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      min-width: 0;
+      overflow-x: auto;
+      padding-bottom: 2px;
+      scrollbar-width: none;
+    }
+
+    #taskbar-apps::-webkit-scrollbar {
+      display: none;
+    }
+
+    .task-chip {
+      height: 40px;
+      border-radius: 13px;
+      padding: 0 14px;
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      white-space: nowrap;
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      cursor: pointer;
+    }
+
+    .task-chip.active {
+      background: rgba(255, 255, 255, 0.16);
+      border-color: rgba(255, 255, 255, 0.24);
+    }
+
+    #status-cluster {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .status-card {
+      min-width: 100px;
+      padding: 10px 12px;
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      text-align: center;
+    }
+
+    #toast-layer {
+      position: absolute;
+      top: 16px;
+      right: 16px;
+      display: grid;
+      gap: 10px;
+      z-index: 1200;
+      pointer-events: none;
+    }
+
+    .toast {
+      min-width: 240px;
+      max-width: 340px;
+      padding: 14px 16px;
+      border-radius: 16px;
+      background: rgba(5, 8, 14, 0.86);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      box-shadow: 0 18px 40px rgba(0, 0, 0, 0.24);
+      transform: translateY(-10px);
+      opacity: 0;
+      animation: toast-in 0.22s ease forwards;
+    }
+
+    .toast.echo {
+      border-color: rgba(110, 231, 249, 0.38);
+    }
+
+    .toast strong {
+      display: block;
+      margin-bottom: 4px;
+    }
+
+    @keyframes toast-in {
+      to {
+        transform: translateY(0);
+        opacity: 1;
+      }
+    }
+
+    @media (max-width: 960px) {
+      .split-layout,
+      .paint-layout,
+      .music-layout,
+      .game-layout {
+        grid-template-columns: 1fr;
+      }
+
+      .window {
+        width: calc(100vw - 28px);
+        height: min(78vh, calc(100vh - 92px));
+      }
+
+      .desktop-icon {
+        width: 82px;
+      }
+
+      #taskbar {
+        left: 10px;
+        right: 10px;
+        bottom: 10px;
+        grid-template-columns: 1fr;
+        height: auto;
+        padding: 10px;
+      }
+
+      #status-cluster {
+        justify-content: space-between;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="desktop">
+    <div id="desktop-icons"></div>
+    <div id="window-layer"></div>
+    <div id="toast-layer"></div>
+    <div id="taskbar">
+      <button id="start-button">BROWSER OS</button>
+      <div id="taskbar-apps"></div>
+      <div id="status-cluster">
+        <div class="status-card" id="status-model">GPT-5.4</div>
+        <div class="status-card" id="clock"></div>
+      </div>
+    </div>
+  </div>
+  <script>
+    (() => {
+      const MODEL_NAME = "gpt-5.4";
+      const desktop = document.getElementById("desktop");
+      const desktopIcons = document.getElementById("desktop-icons");
+      const windowLayer = document.getElementById("window-layer");
+      const taskbarApps = document.getElementById("taskbar-apps");
+      const startButton = document.getElementById("start-button");
+      const clock = document.getElementById("clock");
+      const toastLayer = document.getElementById("toast-layer");
+
+      const listeners = new Set();
+      const openWindows = new Map();
+      let zCounter = 10;
+      let cascadeIndex = 0;
+
+      const wallpapers = {
+        aurora: {
+          name: "Aurora Grid",
+          description: "Cool neon clouds over a blueprint mesh.",
+          value: "radial-gradient(circle at 18% 18%, rgba(110,231,249,0.36), transparent 26%), radial-gradient(circle at 78% 18%, rgba(255,183,3,0.24), transparent 20%), linear-gradient(140deg, #1f3b4d 0%, #0f172a 40%, #020617 100%)"
+        },
+        ember: {
+          name: "Ember Dune",
+          description: "Sunset orange fading into graphite.",
+          value: "radial-gradient(circle at 22% 24%, rgba(251,146,60,0.34), transparent 24%), radial-gradient(circle at 76% 16%, rgba(253,224,71,0.18), transparent 20%), linear-gradient(145deg, #572b1f 0%, #1f2937 42%, #09090b 100%)"
+        },
+        mint: {
+          name: "Mint Reactor",
+          description: "Fresh green spectrum with dark alloy.",
+          value: "radial-gradient(circle at 20% 20%, rgba(74,222,128,0.28), transparent 24%), radial-gradient(circle at 72% 18%, rgba(110,231,249,0.22), transparent 18%), linear-gradient(135deg, #123524 0%, #0f1d22 44%, #031016 100%)"
+        },
+        solar: {
+          name: "Solar Print",
+          description: "Cream gold with blue dusk edges.",
+          value: "radial-gradient(circle at 24% 18%, rgba(255,244,214,0.3), transparent 18%), radial-gradient(circle at 80% 20%, rgba(125,211,252,0.18), transparent 18%), linear-gradient(140deg, #5a4d2d 0%, #172554 48%, #020617 100%)"
+        }
+      };
+
+      function loadState() {
+        const base = {
+          wallpaper: "aurora",
+          notes: "Welcome to Browser OS.\n\nApps included:\n- Control Center\n- Notes\n- Paint\n- Synth Lab\n- Mini Vice 3D\n- Neon Run 3D\n\nSpecial feature: Echo Timeline remembers what you do and can replay it as a desktop memory trail.",
+          logs: [],
+          synthPattern: [true, false, true, false, true, true, false, false],
+          synthTempo: 108,
+          highscores: {
+            vice: 0,
+            neon: 0
+          }
+        };
+        try {
+          const saved = JSON.parse(localStorage.getItem("browser-os-state") || "null");
+          if (!saved) {
+            return base;
+          }
+          return {
+            ...base,
+            ...saved,
+            highscores: {
+              ...base.highscores,
+              ...(saved.highscores || {})
+            }
+          };
+        } catch (error) {
+          return base;
+        }
+      }
+
+      const state = loadState();
+
+      function persistState() {
+        try {
+          localStorage.setItem("browser-os-state", JSON.stringify(state));
+        } catch (error) {
+        }
+      }
+
+      function subscribe(listener) {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      }
+
+      function emitUpdate() {
+        listeners.forEach((listener) => listener());
+      }
+
+      function showToast(title, body, tone) {
+        const toast = document.createElement("div");
+        toast.className = "toast" + (tone ? " " + tone : "");
+        toast.innerHTML = "<strong>" + title + "</strong><div class=\"muted\">" + body + "</div>";
+        toastLayer.prepend(toast);
+        window.setTimeout(() => {
+          toast.style.opacity = "0";
+          toast.style.transform = "translateY(-6px)";
+        }, 3000);
+        window.setTimeout(() => toast.remove(), 3400);
+      }
+
+      function timestamp(date) {
+        return new Intl.DateTimeFormat("en-GB", {
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit"
+        }).format(date);
+      }
+
+      function logActivity(kind, text, toastTitle) {
+        const entry = {
+          kind,
+          text,
+          at: new Date().toISOString()
+        };
+        state.logs.unshift(entry);
+        state.logs = state.logs.slice(0, 24);
+        persistState();
+        emitUpdate();
+        if (toastTitle) {
+          showToast(toastTitle, text);
+        }
+      }
+
+      function replayTimeline() {
+        const items = [...state.logs].reverse();
+        if (!items.length) {
+          showToast("Echo Timeline", "No activity recorded yet.", "echo");
+          return;
+        }
+        items.forEach((entry, index) => {
+          window.setTimeout(() => {
+            showToast("Echo Timeline", timestamp(new Date(entry.at)) + "  " + entry.text, "echo");
+          }, index * 460);
+        });
+      }
+
+      function setWallpaper(key, announce) {
+        if (!wallpapers[key]) {
+          return;
+        }
+        state.wallpaper = key;
+        desktop.style.setProperty("--wallpaper", wallpapers[key].value);
+        persistState();
+        emitUpdate();
+        if (announce) {
+          logActivity("wallpaper", "Wallpaper switched to " + wallpapers[key].name + ".", "Wallpaper");
+        }
+      }
+
+      function updateClock() {
+        const now = new Date();
+        clock.textContent = new Intl.DateTimeFormat("en-GB", {
+          hour: "2-digit",
+          minute: "2-digit",
+          day: "2-digit",
+          month: "short"
+        }).format(now);
+      }
+
+      function clamp(value, min, max) {
+        return Math.min(max, Math.max(min, value));
+      }
+
+      function hash2(x, y) {
+        const raw = Math.sin(x * 127.1 + y * 311.7) * 43758.5453123;
+        return raw - Math.floor(raw);
+      }
+
+      function makeBoxPalette(hue, sat, light) {
+        return [
+          "hsl(" + hue + " " + sat + "% " + Math.max(8, light - 14) + "%)",
+          "hsl(" + hue + " " + sat + "% " + clamp(light + 10, 10, 88) + "%)",
+          "hsl(" + hue + " " + sat + "% " + clamp(light - 4, 10, 88) + "%)",
+          "hsl(" + hue + " " + sat + "% " + clamp(light + 4, 10, 88) + "%)",
+          "hsl(" + hue + " " + sat + "% " + clamp(light + 1, 10, 88) + "%)",
+          "hsl(" + hue + " " + sat + "% " + clamp(light - 8, 10, 88) + "%)"
+        ];
+      }
+
+      function pushQuad(scene, points, fill, stroke, alpha) {
+        scene.push({ points, fill, stroke, alpha: alpha == null ? 1 : alpha });
+      }
+
+      function pushBox(scene, spec) {
+        const yaw = spec.yaw || 0;
+        const sin = Math.sin(yaw);
+        const cos = Math.cos(yaw);
+        const halfWidth = spec.width / 2;
+        const halfHeight = spec.height / 2;
+        const halfDepth = spec.depth / 2;
+        const palette = spec.palette || makeBoxPalette(200, 32, 46);
+        const corners = [
+          { x: -halfWidth, y: -halfHeight, z: -halfDepth },
+          { x: halfWidth, y: -halfHeight, z: -halfDepth },
+          { x: halfWidth, y: -halfHeight, z: halfDepth },
+          { x: -halfWidth, y: -halfHeight, z: halfDepth },
+          { x: -halfWidth, y: halfHeight, z: -halfDepth },
+          { x: halfWidth, y: halfHeight, z: -halfDepth },
+          { x: halfWidth, y: halfHeight, z: halfDepth },
+          { x: -halfWidth, y: halfHeight, z: halfDepth }
+        ].map((point) => ({
+          x: spec.x + point.x * cos - point.z * sin,
+          y: spec.y + point.y,
+          z: spec.z + point.x * sin + point.z * cos
+        }));
+
+        const faces = [
+          [0, 1, 2, 3],
+          [4, 5, 6, 7],
+          [0, 4, 7, 3],
+          [1, 5, 6, 2],
+          [3, 2, 6, 7],
+          [0, 1, 5, 4]
+        ];
+
+        faces.forEach((face, index) => {
+          pushQuad(scene, face.map((cornerIndex) => corners[cornerIndex]), palette[index], spec.stroke || "rgba(255,255,255,0.07)", spec.alpha);
+        });
+      }
+
+      function projectPoint(point, camera, width, height) {
+        const dx = point.x - camera.x;
+        const dy = point.y - camera.y;
+        const dz = point.z - camera.z;
+        const sinYaw = Math.sin(-camera.yaw);
+        const cosYaw = Math.cos(-camera.yaw);
+        const xzX = dx * cosYaw - dz * sinYaw;
+        const xzZ = dx * sinYaw + dz * cosYaw;
+        const sinPitch = Math.sin(camera.pitch);
+        const cosPitch = Math.cos(camera.pitch);
+        const yzY = dy * cosPitch - xzZ * sinPitch;
+        const yzZ = dy * sinPitch + xzZ * cosPitch;
+
+        if (yzZ <= 0.2) {
+          return null;
+        }
+        const scale = camera.fov / yzZ;
+        return {
+          x: width / 2 + xzX * scale,
+          y: height / 2 - yzY * scale,
+          z: yzZ
+        };
+      }
+
+      function polygonArea(points) {
+        let area = 0;
+        for (let index = 0; index < points.length; index += 1) {
+          const next = points[(index + 1) % points.length];
+          area += points[index].x * next.y - next.x * points[index].y;
+        }
+        return area / 2;
+      }
+
+      function renderScene(ctx, width, height, camera, scene) {
+        const polygons = [];
+        scene.forEach((item) => {
+          const projected = item.points.map((point) => projectPoint(point, camera, width, height));
+          if (projected.some((point) => !point)) {
+            return;
+          }
+          const depth = projected.reduce((sum, point) => sum + point.z, 0) / projected.length;
+          if (Math.abs(polygonArea(projected)) < 0.25) {
+            return;
+          }
+          polygons.push({
+            projected,
+            fill: item.fill,
+            stroke: item.stroke,
+            alpha: item.alpha == null ? 1 : item.alpha,
+            depth
+          });
+        });
+
+        polygons.sort((left, right) => right.depth - left.depth);
+        polygons.forEach((poly) => {
+          ctx.beginPath();
+          ctx.moveTo(poly.projected[0].x, poly.projected[0].y);
+          for (let index = 1; index < poly.projected.length; index += 1) {
+            ctx.lineTo(poly.projected[index].x, poly.projected[index].y);
+          }
+          ctx.closePath();
+          ctx.globalAlpha = poly.alpha;
+          ctx.fillStyle = poly.fill;
+          ctx.fill();
+          if (poly.stroke) {
+            ctx.strokeStyle = poly.stroke;
+            ctx.lineWidth = 1;
+            ctx.stroke();
+          }
+        });
+        ctx.globalAlpha = 1;
+      }
+
+      function createWindow(app) {
+        if (openWindows.has(app.id)) {
+          focusWindow(openWindows.get(app.id));
+          return openWindows.get(app.id);
+        }
+
+        const windowElement = document.createElement("section");
+        windowElement.className = "window active";
+        windowElement.style.left = 70 + (cascadeIndex % 5) * 34 + "px";
+        windowElement.style.top = 72 + (cascadeIndex % 4) * 28 + "px";
+        cascadeIndex += 1;
+
+        const header = document.createElement("div");
+        header.className = "window-header";
+
+        const title = document.createElement("div");
+        title.className = "window-title";
+        title.innerHTML = "<div class=\"window-badge\">" + app.badge + "</div><span>" + app.name + "</span>";
+
+        const actions = document.createElement("div");
+        actions.className = "window-actions";
+        const closeButton = document.createElement("button");
+        closeButton.type = "button";
+        closeButton.textContent = "X";
+        actions.appendChild(closeButton);
+
+        header.append(title, actions);
+
+        const body = document.createElement("div");
+        body.className = "window-body";
+        windowElement.append(header, body);
+        windowLayer.appendChild(windowElement);
+
+        const chip = document.createElement("button");
+        chip.type = "button";
+        chip.className = "task-chip active";
+        chip.innerHTML = "<span class=\"window-badge\">" + app.badge + "</span><span>" + app.name + "</span>";
+        taskbarApps.appendChild(chip);
+
+        const instance = {
+          app,
+          element: windowElement,
+          chip,
+          cleanup: null
+        };
+
+        openWindows.set(app.id, instance);
+
+        chip.addEventListener("click", () => focusWindow(instance));
+        windowElement.addEventListener("mousedown", () => focusWindow(instance));
+        closeButton.addEventListener("click", () => closeWindow(app.id));
+
+        enableDragging(header, windowElement);
+        focusWindow(instance);
+
+        const mounted = app.mount(body);
+        if (mounted && typeof mounted.destroy === "function") {
+          instance.cleanup = mounted.destroy;
+        }
+
+        logActivity("app", app.name + " opened.");
+        return instance;
+      }
+
+      function closeWindow(id) {
+        const instance = openWindows.get(id);
+        if (!instance) {
+          return;
+        }
+        if (instance.cleanup) {
+          instance.cleanup();
+        }
+        instance.element.remove();
+        instance.chip.remove();
+        openWindows.delete(id);
+      }
+
+      function focusWindow(instance) {
+        openWindows.forEach((item) => {
+          item.element.classList.remove("active");
+          item.chip.classList.remove("active");
+        });
+        instance.element.classList.add("active");
+        instance.chip.classList.add("active");
+        instance.element.style.zIndex = String(++zCounter);
+      }
+
+      function enableDragging(handle, target) {
+        let dragging = false;
+        let startX = 0;
+        let startY = 0;
+        let originLeft = 0;
+        let originTop = 0;
+
+        handle.addEventListener("pointerdown", (event) => {
+          if (event.target.tagName === "BUTTON") {
+            return;
+          }
+          dragging = true;
+          startX = event.clientX;
+          startY = event.clientY;
+          originLeft = target.offsetLeft;
+          originTop = target.offsetTop;
+          handle.setPointerCapture(event.pointerId);
+        });
+
+        handle.addEventListener("pointermove", (event) => {
+          if (!dragging) {
+            return;
+          }
+          const nextLeft = clamp(originLeft + (event.clientX - startX), 8, window.innerWidth - target.offsetWidth - 8);
+          const nextTop = clamp(originTop + (event.clientY - startY), 8, window.innerHeight - target.offsetHeight - 80);
+          target.style.left = nextLeft + "px";
+          target.style.top = nextTop + "px";
+        });
+
+        const stop = () => {
+          dragging = false;
+        };
+
+        handle.addEventListener("pointerup", stop);
+        handle.addEventListener("pointercancel", stop);
+      }
+
+      function fitCanvas(canvas) {
+        const rect = canvas.getBoundingClientRect();
+        const ratio = window.devicePixelRatio || 1;
+        canvas.width = Math.max(320, Math.floor(rect.width * ratio));
+        canvas.height = Math.max(240, Math.floor(rect.height * ratio));
+        const ctx = canvas.getContext("2d");
+        ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+        return {
+          ctx,
+          width: rect.width,
+          height: rect.height
+        };
+      }
+
+      function renderDesktopIcons(appList) {
+        desktopIcons.innerHTML = "";
+        appList.forEach((app, index) => {
+          const icon = document.createElement("button");
+          icon.type = "button";
+          icon.className = "desktop-icon";
+          icon.style.left = 12 + Math.floor(index / 6) * 108 + "px";
+          icon.style.top = 10 + (index % 6) * 102 + "px";
+          icon.innerHTML = "<div class=\"icon-badge\">" + app.badge + "</div><span>" + app.name + "</span>";
+          icon.addEventListener("dblclick", () => createWindow(app));
+          icon.addEventListener("click", () => focusIcon(icon));
+          desktopIcons.appendChild(icon);
+        });
+      }
+
+      function focusIcon(icon) {
+        desktopIcons.querySelectorAll(".desktop-icon").forEach((item) => {
+          item.style.filter = "none";
+        });
+        icon.style.filter = "brightness(1.1)";
+      }
+
+      function buildControlCenter(container) {
+        container.innerHTML = "";
+        const appHeader = document.createElement("div");
+        appHeader.className = "app-header";
+        appHeader.innerHTML = "<h2>Control Center</h2><p class=\"muted\">Wallpapers, system status, and the special feature live here.</p>";
+
+        const grid = document.createElement("div");
+        grid.className = "panel-grid";
+
+        const wallpaperPanel = document.createElement("section");
+        wallpaperPanel.className = "panel";
+        wallpaperPanel.innerHTML = "<h3>Wallpaper Deck</h3><p class=\"muted\">Switch the desktop look instantly.</p>";
+        const swatchRow = document.createElement("div");
+        swatchRow.className = "swatch-row";
+        Object.keys(wallpapers).forEach((key) => {
+          const data = wallpapers[key];
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "wallpaper-swatch" + (state.wallpaper === key ? " primary" : "");
+          button.style.background = data.value;
+          button.innerHTML = "<span>" + data.name + "</span><small>" + data.description + "</small>";
+          button.addEventListener("click", () => setWallpaper(key, true));
+          swatchRow.appendChild(button);
+        });
+        wallpaperPanel.appendChild(swatchRow);
+
+        const featurePanel = document.createElement("section");
+        featurePanel.className = "panel";
+        featurePanel.innerHTML = "<h3>Special Feature: Echo Timeline</h3><p class=\"muted\">Browser OS records your recent actions and can replay them as a sequence of ghost notifications. It is special because the desktop becomes a memory surface instead of a static shell, so your session leaves a visible narrative.</p>";
+        const replayButton = document.createElement("button");
+        replayButton.type = "button";
+        replayButton.className = "btn primary";
+        replayButton.textContent = "Replay Timeline";
+        replayButton.addEventListener("click", () => {
+          replayTimeline();
+          logActivity("echo", "Echo Timeline replay triggered.");
+        });
+        featurePanel.appendChild(replayButton);
+
+        const statusPanel = document.createElement("section");
+        statusPanel.className = "panel";
+        statusPanel.innerHTML = "<h3>System Snapshot</h3>";
+        const systemStats = document.createElement("div");
+        systemStats.className = "hud-grid";
+        function fillStats() {
+          systemStats.innerHTML = "";
+          [
+            ["Model", MODEL_NAME],
+            ["Wallpaper", wallpapers[state.wallpaper].name],
+            ["Vice High", String(state.highscores.vice)],
+            ["Neon High", String(state.highscores.neon)]
+          ].forEach((entry) => {
+            const stat = document.createElement("div");
+            stat.className = "stat";
+            stat.innerHTML = "<strong>" + entry[0] + "</strong><span>" + entry[1] + "</span>";
+            systemStats.appendChild(stat);
+          });
+        }
+        fillStats();
+        statusPanel.appendChild(systemStats);
+
+        const activityPanel = document.createElement("section");
+        activityPanel.className = "panel";
+        activityPanel.innerHTML = "<h3>Recent Activity</h3><p class=\"muted\">Latest actions captured by Echo Timeline.</p>";
+        const list = document.createElement("div");
+        list.className = "activity-list";
+        function fillActivity() {
+          list.innerHTML = "";
+          if (!state.logs.length) {
+            const empty = document.createElement("div");
+            empty.className = "activity-item";
+            empty.innerHTML = "<span>No activity yet.</span><time>--:--:--</time>";
+            list.appendChild(empty);
+            return;
+          }
+          state.logs.slice(0, 8).forEach((entry) => {
+            const item = document.createElement("div");
+            item.className = "activity-item";
+            item.innerHTML = "<span>" + entry.text + "</span><time>" + timestamp(new Date(entry.at)) + "</time>";
+            list.appendChild(item);
+          });
+        }
+        fillActivity();
+        activityPanel.appendChild(list);
+
+        const unsubscribe = subscribe(() => {
+          fillStats();
+          fillActivity();
+        });
+
+        grid.append(wallpaperPanel, featurePanel, statusPanel, activityPanel);
+        container.append(appHeader, grid);
+        return {
+          destroy: unsubscribe
+        };
+      }
+
+      function buildNotes(container) {
+        container.innerHTML = "<div class=\"split-layout\"><section class=\"notes-area\"></section><aside class=\"panel\"></aside></div>";
+        const notesArea = container.querySelector(".notes-area");
+        const side = container.querySelector("aside");
+
+        const toolbar = document.createElement("div");
+        toolbar.className = "button-row";
+        const saveButton = document.createElement("button");
+        saveButton.type = "button";
+        saveButton.className = "btn primary";
+        saveButton.textContent = "Save Note";
+        const resetButton = document.createElement("button");
+        resetButton.type = "button";
+        resetButton.className = "btn";
+        resetButton.textContent = "Reset";
+        toolbar.append(saveButton, resetButton);
+
+        const editor = document.createElement("textarea");
+        editor.className = "notes-editor";
+        editor.value = state.notes;
+
+        notesArea.append(toolbar, editor);
+
+        side.innerHTML = "<h3>Notebook</h3><p class=\"muted\">Keep quick ideas, controls, or mission notes here. Content persists in localStorage when the file is opened in Chrome.</p><div class=\"badge-line\">Echo Timeline records saves.</div>";
+
+        saveButton.addEventListener("click", () => {
+          state.notes = editor.value;
+          persistState();
+          logActivity("notes", "Notebook saved.", "Notes");
+        });
+
+        resetButton.addEventListener("click", () => {
+          editor.value = "";
+          state.notes = "";
+          persistState();
+          logActivity("notes", "Notebook cleared.", "Notes");
+        });
+
+        return {};
+      }
+
+      function buildPaint(container) {
+        container.innerHTML = "<div class=\"paint-layout\"><aside class=\"panel\"></aside><canvas class=\"paint-canvas\"></canvas></div>";
+        const side = container.querySelector("aside");
+        const canvas = container.querySelector("canvas");
+        const ctx = canvas.getContext("2d");
+        const colors = ["#f8fafc", "#ffb703", "#fb7185", "#6ee7f9", "#7ce38b", "#c084fc"];
+        let currentColor = colors[1];
+        let brushSize = 6;
+        let drawing = false;
+
+        side.innerHTML = "<h3>Paint Deck</h3><p class=\"muted\">Sketch on the glass panel. Works with mouse or touch.</p>";
+        const swatches = document.createElement("div");
+        swatches.className = "chip-row";
+        colors.forEach((color, index) => {
+          const swatch = document.createElement("button");
+          swatch.type = "button";
+          swatch.className = "color-chip" + (index === 1 ? " active" : "");
+          swatch.style.background = color;
+          swatch.addEventListener("click", () => {
+            currentColor = color;
+            swatches.querySelectorAll(".color-chip").forEach((chip) => chip.classList.remove("active"));
+            swatch.classList.add("active");
+          });
+          swatches.appendChild(swatch);
+        });
+
+        const sliderWrap = document.createElement("div");
+        sliderWrap.className = "slider-row";
+        sliderWrap.innerHTML = "<label>Brush Size</label>";
+        const slider = document.createElement("input");
+        slider.type = "range";
+        slider.min = "2";
+        slider.max = "24";
+        slider.value = String(brushSize);
+        slider.addEventListener("input", () => {
+          brushSize = Number(slider.value);
+        });
+
+        const clearButton = document.createElement("button");
+        clearButton.type = "button";
+        clearButton.className = "btn";
+        clearButton.textContent = "Clear Canvas";
+        clearButton.addEventListener("click", () => {
+          resizeCanvas();
+          logActivity("paint", "Paint canvas cleared.");
+        });
+
+        side.append(swatches, sliderWrap, clearButton);
+        sliderWrap.appendChild(slider);
+
+        function resizeCanvas() {
+          const rect = canvas.getBoundingClientRect();
+          canvas.width = Math.max(360, Math.floor(rect.width));
+          canvas.height = Math.max(280, Math.floor(rect.height));
+          ctx.fillStyle = "rgba(6, 10, 16, 0.95)";
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          ctx.strokeStyle = "rgba(255,255,255,0.08)";
+          for (let x = 0; x < canvas.width; x += 24) {
+            ctx.beginPath();
+            ctx.moveTo(x, 0);
+            ctx.lineTo(x, canvas.height);
+            ctx.stroke();
+          }
+          for (let y = 0; y < canvas.height; y += 24) {
+            ctx.beginPath();
+            ctx.moveTo(0, y);
+            ctx.lineTo(canvas.width, y);
+            ctx.stroke();
+          }
+        }
+
+        function pointerPosition(event) {
+          const rect = canvas.getBoundingClientRect();
+          return {
+            x: event.clientX - rect.left,
+            y: event.clientY - rect.top
+          };
+        }
+
+        function drawTo(event) {
+          const point = pointerPosition(event);
+          ctx.lineCap = "round";
+          ctx.lineJoin = "round";
+          ctx.lineWidth = brushSize;
+          ctx.strokeStyle = currentColor;
+          if (!drawing) {
+            ctx.beginPath();
+            ctx.moveTo(point.x, point.y);
+            drawing = true;
+            return;
+          }
+          ctx.lineTo(point.x, point.y);
+          ctx.stroke();
+        }
+
+        canvas.addEventListener("pointerdown", (event) => {
+          canvas.setPointerCapture(event.pointerId);
+          drawing = false;
+          drawTo(event);
+        });
+        canvas.addEventListener("pointermove", (event) => {
+          if (event.buttons === 0) {
+            return;
+          }
+          drawTo(event);
+        });
+        canvas.addEventListener("pointerup", () => {
+          drawing = false;
+        });
+        canvas.addEventListener("pointerleave", () => {
+          drawing = false;
+        });
+
+        resizeCanvas();
+        const onResize = () => resizeCanvas();
+        window.addEventListener("resize", onResize);
+        return {
+          destroy: () => window.removeEventListener("resize", onResize)
+        };
+      }
+
+      function buildSynth(container) {
+        container.innerHTML = "<div class=\"music-layout\"><aside class=\"panel music-panel\"></aside><section class=\"panel\"></section></div>";
+        const side = container.querySelector("aside");
+        const stage = container.querySelector("section");
+
+        let audioContext = null;
+        let loopId = null;
+        let stepIndex = 0;
+
+        const scale = [261.63, 329.63, 392.0, 440.0, 523.25, 659.25];
+        const noteNames = ["C4", "E4", "G4", "A4", "C5", "E5"];
+
+        function ensureAudio() {
+          if (!audioContext) {
+            const Context = window.AudioContext || window.webkitAudioContext;
+            if (!Context) {
+              showToast("Synth Lab", "Web Audio is unavailable in this browser.");
+              return null;
+            }
+            audioContext = new Context();
+          }
+          return audioContext;
+        }
+
+        function playTone(frequency, duration, gainValue) {
+          const ctx = ensureAudio();
+          if (!ctx) {
+            return;
+          }
+          const oscillator = ctx.createOscillator();
+          const gain = ctx.createGain();
+          oscillator.type = "sawtooth";
+          oscillator.frequency.value = frequency;
+          gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(gainValue || 0.12, ctx.currentTime + 0.02);
+          gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + duration);
+          oscillator.connect(gain);
+          gain.connect(ctx.destination);
+          oscillator.start();
+          oscillator.stop(ctx.currentTime + duration + 0.02);
+        }
+
+        side.innerHTML = "<h3>Synth Lab</h3><p class=\"muted\">Tap pads for immediate notes or run an 8-step pulse sequence.</p>";
+        const padRow = document.createElement("div");
+        padRow.className = "pad-row";
+        scale.forEach((frequency, index) => {
+          const pad = document.createElement("button");
+          pad.type = "button";
+          pad.className = "pad";
+          pad.textContent = noteNames[index];
+          pad.addEventListener("click", () => playTone(frequency, 0.25, 0.16));
+          padRow.appendChild(pad);
+        });
+        side.appendChild(padRow);
+
+        const tempoRow = document.createElement("div");
+        tempoRow.className = "slider-row";
+        tempoRow.innerHTML = "<label>Tempo</label>";
+        const tempoSlider = document.createElement("input");
+        tempoSlider.type = "range";
+        tempoSlider.min = "72";
+        tempoSlider.max = "160";
+        tempoSlider.value = String(state.synthTempo || 108);
+        tempoRow.appendChild(tempoSlider);
+        side.appendChild(tempoRow);
+
+        stage.innerHTML = "<h3>Pulse Sequence</h3><p class=\"muted\">Each step triggers a scale note. Toggle cells to shape the groove.</p>";
+        const steps = document.createElement("div");
+        steps.className = "step-row";
+        const sequence = state.synthPattern.slice(0, 8);
+        while (sequence.length < 8) {
+          sequence.push(false);
+        }
+
+        sequence.forEach((enabled, index) => {
+          const step = document.createElement("button");
+          step.type = "button";
+          step.className = "step" + (enabled ? " active" : "");
+          step.textContent = String(index + 1);
+          step.addEventListener("click", () => {
+            sequence[index] = !sequence[index];
+            state.synthPattern = sequence.slice();
+            persistState();
+            step.classList.toggle("active", sequence[index]);
+          });
+          steps.appendChild(step);
+        });
+        stage.appendChild(steps);
+
+        const controls = document.createElement("div");
+        controls.className = "button-row";
+        const playButton = document.createElement("button");
+        playButton.type = "button";
+        playButton.className = "btn primary";
+        playButton.textContent = "Start Loop";
+        const stopButton = document.createElement("button");
+        stopButton.type = "button";
+        stopButton.className = "btn";
+        stopButton.textContent = "Stop";
+        controls.append(playButton, stopButton);
+        stage.appendChild(controls);
+
+        function stopLoop(logIt) {
+          if (loopId) {
+            window.clearInterval(loopId);
+            loopId = null;
+            if (logIt) {
+              logActivity("synth", "Synth loop stopped.");
+            }
+          }
+        }
+
+        playButton.addEventListener("click", () => {
+          stopLoop(false);
+          ensureAudio();
+          state.synthTempo = Number(tempoSlider.value);
+          persistState();
+          const interval = (60 / state.synthTempo) * 1000;
+          loopId = window.setInterval(() => {
+            const active = sequence[stepIndex % sequence.length];
+            const targetFrequency = scale[stepIndex % scale.length];
+            const stepButtons = steps.querySelectorAll(".step");
+            stepButtons.forEach((button, index) => {
+              button.style.transform = index === stepIndex % sequence.length ? "translateY(-4px)" : "";
+            });
+            if (active) {
+              playTone(targetFrequency, 0.22, 0.12);
+            }
+            stepIndex += 1;
+          }, interval);
+          logActivity("synth", "Synth loop started at " + state.synthTempo + " BPM.", "Synth Lab");
+        });
+
+        stopButton.addEventListener("click", () => stopLoop(true));
+
+        return {
+          destroy: () => stopLoop(false)
+        };
+      }
+
+      function buildVice(container) {
+        container.innerHTML = "<div class=\"game-layout\"><aside class=\"panel\"></aside><div class=\"game-shell\"><canvas class=\"game-canvas\"></canvas></div></div>";
+        const side = container.querySelector("aside");
+        const canvas = container.querySelector("canvas");
+
+        side.innerHTML = "<h3>Mini Vice 3D</h3><p class=\"muted\">A compact GTA-style city chase. Drive the coupe, collect cash drops, and avoid police pressure.</p><div class=\"badge-line\">Controls: W/S accelerate, A/D steer</div><div class=\"badge-line\">Objective: collect cases and stay alive</div>";
+        const hud = document.createElement("div");
+        hud.className = "hud-grid";
+        side.appendChild(hud);
+
+        const control = { up: false, down: false, left: false, right: false };
+        const player = { x: 0, z: 0, angle: 0, speed: 0, health: 100, score: 0 };
+        const pickups = Array.from({ length: 10 }, (_, index) => spawnRoadPickup(index * 13.7));
+        const police = Array.from({ length: 3 }, (_, index) => ({
+          x: (index - 1) * 18,
+          z: -28 - index * 16,
+          angle: 0,
+          speed: 6 + index,
+          flash: 0
+        }));
+        const roadStep = 24;
+        const roadHalf = 5;
+        let lastTime = 0;
+        let frameId = 0;
+
+        function spawnRoadPickup(offset) {
+          const line = Math.round((hash2(offset, offset + 3) * 8) - 4);
+          const useVertical = hash2(offset + 4, offset + 8) > 0.5;
+          const spread = (hash2(offset + 7, offset + 11) - 0.5) * 160;
+          return useVertical
+            ? { x: line * roadStep, z: spread }
+            : { x: spread, z: line * roadStep };
+        }
+
+        function buildingForCell(gx, gz) {
+          const centerX = gx * roadStep + roadStep / 2;
+          const centerZ = gz * roadStep + roadStep / 2;
+          const width = 9 + Math.floor(hash2(gx, gz) * 4);
+          const depth = 9 + Math.floor(hash2(gz, gx) * 4);
+          const height = 8 + Math.floor(hash2(gx + 4, gz - 5) * 26);
+          const hue = 188 + Math.floor(hash2(gx * 2, gz * 3) * 70);
+          return {
+            x: centerX,
+            z: centerZ,
+            width,
+            depth,
+            height,
+            palette: makeBoxPalette(hue, 34, 34 + Math.floor(hash2(gx - 3, gz + 7) * 12))
+          };
+        }
+
+        function isInsideBuilding(x, z) {
+          const baseX = Math.floor((x - roadStep / 2) / roadStep);
+          const baseZ = Math.floor((z - roadStep / 2) / roadStep);
+          for (let gx = baseX - 1; gx <= baseX + 1; gx += 1) {
+            for (let gz = baseZ - 1; gz <= baseZ + 1; gz += 1) {
+              const building = buildingForCell(gx, gz);
+              if (Math.abs(x - building.x) < building.width / 2 + 1.6 && Math.abs(z - building.z) < building.depth / 2 + 1.6) {
+                return true;
+              }
+            }
+          }
+          return false;
+        }
+
+        function collectPickups() {
+          pickups.forEach((pickup, index) => {
+            const dx = pickup.x - player.x;
+            const dz = pickup.z - player.z;
+            if (Math.hypot(dx, dz) < 4.2) {
+              player.score += 100;
+              pickups[index] = spawnRoadPickup(player.score + index * 19.3);
+              if (player.score > state.highscores.vice) {
+                state.highscores.vice = player.score;
+                persistState();
+              }
+              if (player.score % 300 === 0) {
+                logActivity("vice", "Mini Vice cash reached " + player.score + ".");
+              }
+            }
+          });
+        }
+
+        function updateHud() {
+          const wanted = clamp(1 + Math.floor(player.score / 350), 1, 5);
+          hud.innerHTML = "";
+          [
+            ["Cash", "$" + player.score],
+            ["Health", String(Math.max(0, Math.round(player.health)))],
+            ["Wanted", "Level " + wanted],
+            ["Best", "$" + state.highscores.vice]
+          ].forEach((entry) => {
+            const stat = document.createElement("div");
+            stat.className = "stat";
+            stat.innerHTML = "<strong>" + entry[0] + "</strong><span>" + entry[1] + "</span>";
+            hud.appendChild(stat);
+          });
+        }
+
+        function resetGame() {
+          if (player.score > state.highscores.vice) {
+            state.highscores.vice = player.score;
+            persistState();
+          }
+          logActivity("vice", "Mini Vice reset after police shutdown at $" + player.score + ".", "Mini Vice");
+          player.x = 0;
+          player.z = 0;
+          player.angle = 0;
+          player.speed = 0;
+          player.health = 100;
+          player.score = 0;
+        }
+
+        function updateGame(delta) {
+          const turn = 1.85 * delta * (0.4 + Math.min(Math.abs(player.speed), 8) * 0.09);
+          if (control.left) {
+            player.angle -= turn;
+          }
+          if (control.right) {
+            player.angle += turn;
+          }
+          if (control.up) {
+            player.speed += 12 * delta;
+          }
+          if (control.down) {
+            player.speed -= 14 * delta;
+          }
+          player.speed *= 0.982;
+          player.speed = clamp(player.speed, -4.5, 13);
+
+          const nextX = player.x + Math.sin(player.angle) * player.speed * delta * 9;
+          const nextZ = player.z + Math.cos(player.angle) * player.speed * delta * 9;
+          if (isInsideBuilding(nextX, nextZ)) {
+            player.speed *= -0.18;
+            player.health -= 4;
+          } else {
+            player.x = nextX;
+            player.z = nextZ;
+          }
+
+          police.forEach((car, index) => {
+            const target = Math.atan2(player.x - car.x, player.z - car.z);
+            let drift = target - car.angle;
+            while (drift > Math.PI) {
+              drift -= Math.PI * 2;
+            }
+            while (drift < -Math.PI) {
+              drift += Math.PI * 2;
+            }
+            car.angle += drift * 0.05;
+            const chaseSpeed = 4.5 + Math.floor(player.score / 500) + index * 0.35;
+            car.x += Math.sin(car.angle) * chaseSpeed * delta * 7;
+            car.z += Math.cos(car.angle) * chaseSpeed * delta * 7;
+            const gap = Math.hypot(car.x - player.x, car.z - player.z);
+            if (gap < 5.8) {
+              player.health -= 12 * delta;
+              car.flash = 1;
+            }
+            car.flash *= 0.92;
+          });
+
+          collectPickups();
+          if (player.health <= 0) {
+            resetGame();
+          }
+          updateHud();
+        }
+
+        function renderMiniMap(ctx, width, height) {
+          const mapSize = 110;
+          const x = width - mapSize - 16;
+          const y = 16;
+          ctx.save();
+          ctx.fillStyle = "rgba(2, 6, 12, 0.72)";
+          ctx.fillRect(x, y, mapSize, mapSize);
+          ctx.strokeStyle = "rgba(255,255,255,0.18)";
+          ctx.strokeRect(x, y, mapSize, mapSize);
+          const scale = 0.32;
+          for (let line = -3; line <= 3; line += 1) {
+            const offset = line * roadStep * scale;
+            ctx.strokeStyle = "rgba(255,255,255,0.1)";
+            ctx.beginPath();
+            ctx.moveTo(x, y + mapSize / 2 + offset);
+            ctx.lineTo(x + mapSize, y + mapSize / 2 + offset);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(x + mapSize / 2 + offset, y);
+            ctx.lineTo(x + mapSize / 2 + offset, y + mapSize);
+            ctx.stroke();
+          }
+
+          pickups.forEach((pickup) => {
+            ctx.fillStyle = "#ffb703";
+            ctx.fillRect(x + mapSize / 2 + (pickup.x - player.x) * scale - 2, y + mapSize / 2 + (pickup.z - player.z) * scale - 2, 4, 4);
+          });
+          police.forEach((car) => {
+            ctx.fillStyle = "#fb7185";
+            ctx.fillRect(x + mapSize / 2 + (car.x - player.x) * scale - 3, y + mapSize / 2 + (car.z - player.z) * scale - 3, 6, 6);
+          });
+          ctx.fillStyle = "#6ee7f9";
+          ctx.beginPath();
+          ctx.arc(x + mapSize / 2, y + mapSize / 2, 4, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        }
+
+        function frame(now) {
+          const delta = Math.min(0.035, (now - lastTime) / 1000 || 0.016);
+          lastTime = now;
+          updateGame(delta);
+
+          const fitted = fitCanvas(canvas);
+          const ctx = fitted.ctx;
+          const width = fitted.width;
+          const height = fitted.height;
+          const scene = [];
+          const camera = {
+            x: player.x - Math.sin(player.angle) * 12,
+            y: 9,
+            z: player.z - Math.cos(player.angle) * 12,
+            yaw: player.angle,
+            pitch: 0.48,
+            fov: 290
+          };
+
+          const sky = ctx.createLinearGradient(0, 0, 0, height);
+          sky.addColorStop(0, "#17304a");
+          sky.addColorStop(0.5, "#0f172a");
+          sky.addColorStop(1, "#05080d");
+          ctx.fillStyle = sky;
+          ctx.fillRect(0, 0, width, height);
+
+          const tileSize = 8;
+          const range = 8;
+          const tileX = Math.floor(player.x / tileSize);
+          const tileZ = Math.floor(player.z / tileSize);
+          for (let gx = tileX - range; gx <= tileX + range; gx += 1) {
+            for (let gz = tileZ - range; gz <= tileZ + range; gz += 1) {
+              const centerX = gx * tileSize + tileSize / 2;
+              const centerZ = gz * tileSize + tileSize / 2;
+              const road = Math.min(Math.abs(((centerX % roadStep) + roadStep) % roadStep), roadStep - Math.abs(((centerX % roadStep) + roadStep) % roadStep)) < roadHalf || Math.min(Math.abs(((centerZ % roadStep) + roadStep) % roadStep), roadStep - Math.abs(((centerZ % roadStep) + roadStep) % roadStep)) < roadHalf;
+              const fill = road ? "rgba(44,56,72,0.95)" : "rgba(18,42,34,0.94)";
+              pushQuad(scene, [
+                { x: centerX - tileSize / 2, y: 0, z: centerZ - tileSize / 2 },
+                { x: centerX + tileSize / 2, y: 0, z: centerZ - tileSize / 2 },
+                { x: centerX + tileSize / 2, y: 0, z: centerZ + tileSize / 2 },
+                { x: centerX - tileSize / 2, y: 0, z: centerZ + tileSize / 2 }
+              ], fill, "rgba(255,255,255,0.03)");
+            }
+          }
+
+          const cellX = Math.floor((player.x - roadStep / 2) / roadStep);
+          const cellZ = Math.floor((player.z - roadStep / 2) / roadStep);
+          for (let gx = cellX - 4; gx <= cellX + 4; gx += 1) {
+            for (let gz = cellZ - 4; gz <= cellZ + 4; gz += 1) {
+              const building = buildingForCell(gx, gz);
+              pushBox(scene, {
+                x: building.x,
+                y: building.height / 2,
+                z: building.z,
+                width: building.width,
+                height: building.height,
+                depth: building.depth,
+                palette: building.palette,
+                stroke: "rgba(255,255,255,0.08)"
+              });
+            }
+          }
+
+          pickups.forEach((pickup) => {
+            pushBox(scene, {
+              x: pickup.x,
+              y: 1.2,
+              z: pickup.z,
+              width: 1.5,
+              height: 2.4,
+              depth: 1.5,
+              palette: makeBoxPalette(44, 92, 56),
+              stroke: "rgba(255,255,255,0.2)"
+            });
+          });
+
+          pushBox(scene, {
+            x: player.x,
+            y: 1.2,
+            z: player.z,
+            width: 3.1,
+            height: 1.2,
+            depth: 5.2,
+            yaw: player.angle,
+            palette: makeBoxPalette(196, 88, 58),
+            stroke: "rgba(255,255,255,0.18)"
+          });
+          pushBox(scene, {
+            x: player.x,
+            y: 2.1,
+            z: player.z - Math.cos(player.angle) * 0.1,
+            width: 2.2,
+            height: 0.8,
+            depth: 2.2,
+            yaw: player.angle,
+            palette: makeBoxPalette(200, 26, 72),
+            stroke: "rgba(255,255,255,0.18)"
+          });
+
+          police.forEach((car) => {
+            const palette = car.flash > 0.2 ? makeBoxPalette(350, 82, 58) : makeBoxPalette(8, 78, 52);
+            pushBox(scene, {
+              x: car.x,
+              y: 1.1,
+              z: car.z,
+              width: 3,
+              height: 1.1,
+              depth: 5,
+              yaw: car.angle,
+              palette,
+              stroke: "rgba(255,255,255,0.18)"
+            });
+          });
+
+          renderScene(ctx, width, height, camera, scene);
+          renderMiniMap(ctx, width, height);
+
+          ctx.fillStyle = "rgba(255,255,255,0.92)";
+          ctx.font = "700 15px Avenir Next, Trebuchet MS, sans-serif";
+          ctx.fillText("MINI VICE 3D", 18, 28);
+          ctx.font = "13px Avenir Next, Trebuchet MS, sans-serif";
+          ctx.fillStyle = "rgba(255,255,255,0.72)";
+          ctx.fillText("Collect cash cases and stay clear of the police box vans.", 18, 48);
+
+          frameId = window.requestAnimationFrame(frame);
+        }
+
+        function keyHandler(event, active) {
+          if (event.key === "w" || event.key === "ArrowUp") {
+            control.up = active;
+          }
+          if (event.key === "s" || event.key === "ArrowDown") {
+            control.down = active;
+          }
+          if (event.key === "a" || event.key === "ArrowLeft") {
+            control.left = active;
+          }
+          if (event.key === "d" || event.key === "ArrowRight") {
+            control.right = active;
+          }
+        }
+
+        const keyDown = (event) => keyHandler(event, true);
+        const keyUp = (event) => keyHandler(event, false);
+        window.addEventListener("keydown", keyDown);
+        window.addEventListener("keyup", keyUp);
+        updateHud();
+        frameId = window.requestAnimationFrame(frame);
+        return {
+          destroy: () => {
+            window.cancelAnimationFrame(frameId);
+            window.removeEventListener("keydown", keyDown);
+            window.removeEventListener("keyup", keyUp);
+          }
+        };
+      }
+
+      function buildNeon(container) {
+        container.innerHTML = "<div class=\"game-layout\"><aside class=\"panel\"></aside><div class=\"game-shell\"><canvas class=\"game-canvas\"></canvas></div></div>";
+        const side = container.querySelector("aside");
+        const canvas = container.querySelector("canvas");
+
+        side.innerHTML = "<h3>Neon Run 3D</h3><p class=\"muted\">Guide the glider through a collapsing tunnel. Dodge walls, line up with the gates, and collect cyan shards.</p><div class=\"badge-line\">Controls: W/A/S/D or arrow keys</div><div class=\"badge-line\">Objective: survive gates and build score</div>";
+        const hud = document.createElement("div");
+        hud.className = "hud-grid";
+        side.appendChild(hud);
+
+        const ship = { x: 0, y: 0, shield: 3, score: 0 };
+        const control = { left: false, right: false, up: false, down: false };
+        const obstacles = [];
+        const shards = [];
+        const stars = Array.from({ length: 50 }, (_, index) => ({
+          x: (hash2(index, 2) - 0.5) * 24,
+          y: (hash2(index + 3, 4) - 0.5) * 14,
+          z: 15 + hash2(index + 5, 6) * 120
+        }));
+        let spawnClock = 0;
+        let lastTime = 0;
+        let frameId = 0;
+        let damageFlash = 0;
+
+        function spawnGate() {
+          const gapX = (hash2(ship.score + spawnClock * 7, 3) - 0.5) * 10;
+          const gapY = (hash2(ship.score + spawnClock * 11, 6) - 0.5) * 6;
+          const gap = 2.5 + hash2(spawnClock * 5, 9) * 0.8;
+          obstacles.push({ z: 120, gapX, gapY, gap, checked: false });
+          shards.push({ z: 128, x: gapX + (hash2(gapX, gapY) - 0.5) * 1.6, y: gapY + (hash2(gapY, gapX) - 0.5) * 1.2, hit: false });
+        }
+
+        function updateHud() {
+          hud.innerHTML = "";
+          [
+            ["Score", String(ship.score)],
+            ["Shield", String(ship.shield)],
+            ["Best", String(state.highscores.neon)],
+            ["Speed", "28 AU"]
+          ].forEach((entry) => {
+            const stat = document.createElement("div");
+            stat.className = "stat";
+            stat.innerHTML = "<strong>" + entry[0] + "</strong><span>" + entry[1] + "</span>";
+            hud.appendChild(stat);
+          });
+        }
+
+        function resetNeon() {
+          if (ship.score > state.highscores.neon) {
+            state.highscores.neon = ship.score;
+            persistState();
+          }
+          logActivity("neon", "Neon Run collapsed at score " + ship.score + ".", "Neon Run");
+          ship.x = 0;
+          ship.y = 0;
+          ship.shield = 3;
+          ship.score = 0;
+          obstacles.length = 0;
+          shards.length = 0;
+          spawnClock = 0;
+        }
+
+        function updateGame(delta) {
+          ship.x += ((control.right ? 1 : 0) - (control.left ? 1 : 0)) * delta * 11;
+          ship.y += ((control.up ? 1 : 0) - (control.down ? 1 : 0)) * delta * 9;
+          ship.x = clamp(ship.x, -9, 9);
+          ship.y = clamp(ship.y, -6, 6);
+          spawnClock += delta;
+          if (spawnClock > 1.2) {
+            spawnClock = 0;
+            spawnGate();
+          }
+
+          obstacles.forEach((gate) => {
+            gate.z -= delta * 28;
+            if (!gate.checked && gate.z < 2.1) {
+              gate.checked = true;
+              if (Math.abs(ship.x - gate.gapX) > gate.gap || Math.abs(ship.y - gate.gapY) > gate.gap * 0.8) {
+                ship.shield -= 1;
+                damageFlash = 1;
+              } else {
+                ship.score += 25;
+              }
+            }
+          });
+          shards.forEach((shard) => {
+            shard.z -= delta * 28;
+            if (!shard.hit && Math.abs(shard.z) < 1.8 && Math.hypot(ship.x - shard.x, ship.y - shard.y) < 1.4) {
+              shard.hit = true;
+              ship.score += 40;
+            }
+          });
+          stars.forEach((star) => {
+            star.z -= delta * 28;
+            if (star.z < 2) {
+              star.z = 120;
+              star.x = (hash2(star.z + ship.score, ship.score + 7) - 0.5) * 24;
+              star.y = (hash2(ship.score + 9, star.z + 5) - 0.5) * 14;
+            }
+          });
+
+          while (obstacles.length && obstacles[0].z < -2) {
+            obstacles.shift();
+          }
+          while (shards.length && shards[0].z < -2) {
+            shards.shift();
+          }
+          damageFlash *= 0.9;
+
+          if (ship.score > state.highscores.neon) {
+            state.highscores.neon = ship.score;
+            persistState();
+          }
+          if (ship.shield <= 0) {
+            resetNeon();
+          }
+          updateHud();
+        }
+
+        function renderGame() {
+          const fitted = fitCanvas(canvas);
+          const ctx = fitted.ctx;
+          const width = fitted.width;
+          const height = fitted.height;
+          const scene = [];
+          const camera = { x: 0, y: 0, z: 0, yaw: 0, pitch: 0, fov: 300 };
+
+          const background = ctx.createLinearGradient(0, 0, 0, height);
+          background.addColorStop(0, "#040716");
+          background.addColorStop(0.45, "#071326");
+          background.addColorStop(1, "#02030b");
+          ctx.fillStyle = background;
+          ctx.fillRect(0, 0, width, height);
+
+          stars.forEach((star) => {
+            const projected = projectPoint(star, camera, width, height);
+            if (!projected) {
+              return;
+            }
+            const size = clamp(4 / projected.z, 0.8, 3.2);
+            ctx.fillStyle = "rgba(255,255,255,0.8)";
+            ctx.fillRect(projected.x, projected.y, size, size);
+          });
+
+          for (let depth = 8; depth <= 120; depth += 8) {
+            const alpha = 1 - depth / 140;
+            pushQuad(scene, [
+              { x: -12, y: -8, z: depth },
+              { x: 12, y: -8, z: depth },
+              { x: 12, y: 8, z: depth },
+              { x: -12, y: 8, z: depth }
+            ], "rgba(0,0,0,0)", "rgba(110,231,249," + alpha * 0.16 + ")", 1);
+          }
+
+          obstacles.forEach((gate) => {
+            const front = gate.z;
+            const depth = 1.2;
+            const left = -13;
+            const right = 13;
+            const top = 8;
+            const bottom = -8;
+            const gapLeft = gate.gapX - gate.gap;
+            const gapRight = gate.gapX + gate.gap;
+            const gapBottom = gate.gapY - gate.gap * 0.78;
+            const gapTop = gate.gapY + gate.gap * 0.78;
+            [
+              { x: (left + gapLeft) / 2, y: 0, width: gapLeft - left, height: top - bottom },
+              { x: (gapRight + right) / 2, y: 0, width: right - gapRight, height: top - bottom },
+              { x: gate.gapX, y: (gapTop + top) / 2, width: gapRight - gapLeft, height: top - gapTop },
+              { x: gate.gapX, y: (bottom + gapBottom) / 2, width: gapRight - gapLeft, height: gapBottom - bottom }
+            ].forEach((segment) => {
+              if (segment.width <= 0.2 || segment.height <= 0.2) {
+                return;
+              }
+              pushBox(scene, {
+                x: segment.x,
+                y: segment.y,
+                z: front,
+                width: segment.width,
+                height: segment.height,
+                depth,
+                palette: makeBoxPalette(192, 88, 54),
+                stroke: "rgba(255,255,255,0.14)"
+              });
+            });
+          });
+
+          shards.forEach((shard) => {
+            if (shard.hit) {
+              return;
+            }
+            pushBox(scene, {
+              x: shard.x,
+              y: shard.y,
+              z: shard.z,
+              width: 0.8,
+              height: 0.8,
+              depth: 0.8,
+              yaw: shard.z * 0.08,
+              palette: makeBoxPalette(180, 88, 60),
+              stroke: "rgba(255,255,255,0.18)"
+            });
+          });
+
+          renderScene(ctx, width, height, camera, scene);
+
+          ctx.strokeStyle = "rgba(255,255,255,0.75)";
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.moveTo(width / 2 - 14 + ship.x * 7, height / 2 + ship.y * 7);
+          ctx.lineTo(width / 2 + 14 + ship.x * 7, height / 2 + ship.y * 7);
+          ctx.moveTo(width / 2 + ship.x * 7, height / 2 - 14 + ship.y * 7);
+          ctx.lineTo(width / 2 + ship.x * 7, height / 2 + 14 + ship.y * 7);
+          ctx.stroke();
+
+          ctx.fillStyle = "rgba(255,255,255,0.9)";
+          ctx.font = "700 15px Avenir Next, Trebuchet MS, sans-serif";
+          ctx.fillText("NEON RUN 3D", 18, 28);
+          ctx.font = "13px Avenir Next, Trebuchet MS, sans-serif";
+          ctx.fillStyle = "rgba(255,255,255,0.72)";
+          ctx.fillText("Align with the tunnel gaps. Cyan shards add score.", 18, 48);
+
+          if (damageFlash > 0.02) {
+            ctx.fillStyle = "rgba(251,113,133," + damageFlash * 0.22 + ")";
+            ctx.fillRect(0, 0, width, height);
+          }
+        }
+
+        function frame(now) {
+          const delta = Math.min(0.032, (now - lastTime) / 1000 || 0.016);
+          lastTime = now;
+          updateGame(delta);
+          renderGame();
+          frameId = window.requestAnimationFrame(frame);
+        }
+
+        function keyHandler(event, active) {
+          if (event.key === "a" || event.key === "ArrowLeft") {
+            control.left = active;
+          }
+          if (event.key === "d" || event.key === "ArrowRight") {
+            control.right = active;
+          }
+          if (event.key === "w" || event.key === "ArrowUp") {
+            control.up = active;
+          }
+          if (event.key === "s" || event.key === "ArrowDown") {
+            control.down = active;
+          }
+        }
+
+        const keyDown = (event) => keyHandler(event, true);
+        const keyUp = (event) => keyHandler(event, false);
+        window.addEventListener("keydown", keyDown);
+        window.addEventListener("keyup", keyUp);
+        updateHud();
+        spawnGate();
+        frameId = window.requestAnimationFrame(frame);
+
+        return {
+          destroy: () => {
+            window.cancelAnimationFrame(frameId);
+            window.removeEventListener("keydown", keyDown);
+            window.removeEventListener("keyup", keyUp);
+          }
+        };
+      }
+
+      const apps = [
+        {
+          id: "control",
+          name: "Control Center",
+          badge: "CC",
+          mount: buildControlCenter
+        },
+        {
+          id: "notes",
+          name: "Notes",
+          badge: "NT",
+          mount: buildNotes
+        },
+        {
+          id: "paint",
+          name: "Paint",
+          badge: "PT",
+          mount: buildPaint
+        },
+        {
+          id: "synth",
+          name: "Synth Lab",
+          badge: "SY",
+          mount: buildSynth
+        },
+        {
+          id: "vice",
+          name: "Mini Vice 3D",
+          badge: "GTA",
+          mount: buildVice
+        },
+        {
+          id: "neon",
+          name: "Neon Run 3D",
+          badge: "3D",
+          mount: buildNeon
+        }
+      ];
+
+      startButton.addEventListener("click", () => createWindow(apps[0]));
+      renderDesktopIcons(apps);
+      setWallpaper(state.wallpaper, false);
+      updateClock();
+      window.setInterval(updateClock, 1000);
+      createWindow(apps[0]);
+      createWindow(apps[1]);
+      logActivity("system", "Browser OS booted on " + MODEL_NAME + ".", "System");
+      showToast("Browser OS", "Desktop ready. Double-click icons to open apps.");
+    })();
+  </script>
+</body>
+</html>
