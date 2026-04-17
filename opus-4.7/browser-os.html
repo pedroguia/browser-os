@@ -1,0 +1,3312 @@
+<!DOCTYPE html>
+<html lang="en">
+<!--
+  Opus Browser OS — single-file desktop environment for Chrome.
+
+  Apps:
+    - Los Santos Lite  (3D GTA clone — on-foot + driving, NPCs, police, wanted system)
+    - Blockforge       (3D voxel sandbox — place/break blocks, day/night, save/load)
+    - Shader Studio    (live GLSL fragment-shader wallpaper editor)
+    - Files            (localStorage VFS browser)
+    - Paint Studio     (drawing canvas, save to VFS, set as wallpaper)
+    - Calculator       (scientific + unit conversion)
+    - Terminal         (real shell that controls the OS)
+    - Wallpaper        (picker across gradients/images/shaders)
+    - About            (docs for the "special" feature)
+
+  SPECIAL FEATURE: Live GLSL shader wallpapers.
+    The desktop background is a WebGL canvas running a user-editable fragment shader
+    with uniforms u_time, u_resolution, u_mouse, u_audio (mic), u_cpu (frame-time).
+    Ships with 6 presets; users can write their own in Shader Studio and set them
+    as the live wallpaper. Saved to /Shaders in the VFS. See the About app.
+
+  Requires network access (Three.js via CDN import map). All other code is inline.
+-->
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Opus Browser OS</title>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
+    }
+  }
+  </script>
+  <style>
+    :root {
+      --taskbar-h: 46px;
+      --accent: #7c5cff;
+      --accent-2: #22d3ee;
+      --danger: #ef4444;
+      --ok: #22c55e;
+      --bg: #0a0d14;
+      --fg: #e8ecf5;
+      --muted: #98a2b8;
+      --glass: rgba(14, 18, 28, 0.72);
+      --glass-2: rgba(20, 26, 40, 0.88);
+      --border: rgba(255, 255, 255, 0.10);
+      --shadow: 0 24px 60px rgba(0, 0, 0, 0.55), 0 2px 6px rgba(0, 0, 0, 0.4);
+      --radius: 10px;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      color-scheme: dark;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; background: #000; color: var(--fg); overflow: hidden; }
+    body { user-select: none; }
+    button, input, textarea, select { font: inherit; color: inherit; }
+
+    #desktop { position: absolute; inset: 0; padding-bottom: var(--taskbar-h); overflow: hidden; }
+    #wallpaper {
+      position: absolute; inset: 0; width: 100%; height: 100%; z-index: 0; display: block;
+      background: linear-gradient(135deg, #0b1020 0%, #171a2e 50%, #2a1a4a 100%);
+    }
+    #desktop::after {
+      content: ""; position: absolute; inset: 0; pointer-events: none; z-index: 1;
+      background:
+        radial-gradient(1200px 700px at 20% 10%, rgba(255,255,255,0.05), transparent 55%),
+        linear-gradient(to bottom, rgba(0,0,0,0.0), rgba(0,0,0,0.22));
+    }
+
+    #icon-grid {
+      position: absolute; left: 14px; top: 14px; bottom: calc(var(--taskbar-h) + 14px); z-index: 2;
+      display: grid; grid-auto-flow: column;
+      grid-template-rows: repeat(auto-fill, 92px);
+      grid-auto-columns: 96px;
+      gap: 4px 4px;
+    }
+    .d-icon {
+      width: 96px; height: 92px;
+      display: flex; flex-direction: column; align-items: center; justify-content: flex-start;
+      padding: 8px 4px 4px; gap: 6px;
+      border-radius: 10px; border: 1px solid transparent;
+      text-align: center; cursor: pointer;
+      color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,0.8);
+    }
+    .d-icon:hover { background: rgba(255,255,255,0.07); border-color: rgba(255,255,255,0.12); }
+    .d-icon.selected { background: rgba(124,92,255,0.22); border-color: rgba(124,92,255,0.5); }
+    .d-icon .glyph {
+      width: 48px; height: 48px; border-radius: 12px; display: grid; place-items: center;
+      background: linear-gradient(160deg, rgba(255,255,255,0.14), rgba(255,255,255,0.03));
+      border: 1px solid rgba(255,255,255,0.18);
+      font-family: var(--mono); font-size: 15px; font-weight: 700; letter-spacing: 0.5px;
+      box-shadow: 0 4px 14px rgba(0,0,0,0.35);
+      position: relative; overflow: hidden; color: #fff;
+    }
+    .d-icon .glyph svg { width: 28px; height: 28px; display: block; filter: drop-shadow(0 1px 2px rgba(0,0,0,0.5)); pointer-events: none; }
+    .d-icon .glyph { pointer-events: none; }
+    .d-icon .label { pointer-events: none; }
+    .d-icon .label { font-size: 12px; line-height: 1.15; max-width: 92px; overflow: hidden; text-overflow: ellipsis; }
+    /* Per-app accent gradients for icon tiles */
+    .glyph.app-wallpaper { background: linear-gradient(140deg,#ff6a88,#a35cff); }
+    .glyph.app-calc { background: linear-gradient(140deg,#2d7cff,#00d4ff); }
+    .glyph.app-files { background: linear-gradient(140deg,#ffcf5c,#ff8a3d); }
+    .glyph.app-paint { background: linear-gradient(140deg,#ff5cae,#ffd45c); }
+    .glyph.app-terminal { background: linear-gradient(140deg,#111,#2a2a2a); border-color: rgba(124,92,255,0.5); }
+    .glyph.app-shader-studio { background: linear-gradient(140deg,#7c5cff,#00e0a4); }
+    .glyph.app-los-santos { background: linear-gradient(140deg,#ff3d7f,#ff7a2f); }
+    .glyph.app-blockforge { background: linear-gradient(140deg,#4cc471,#2b6a3d); }
+    .glyph.app-about { background: linear-gradient(140deg,#3aa1ff,#7c5cff); }
+    .glyph.app-img-viewer, .glyph.app-text-viewer { background: linear-gradient(140deg,#6c7586,#3a414d); }
+
+    .window {
+      position: absolute; z-index: 10; min-width: 260px; min-height: 180px;
+      background: var(--glass); backdrop-filter: blur(14px) saturate(140%);
+      -webkit-backdrop-filter: blur(14px) saturate(140%);
+      border: 1px solid var(--border); border-radius: var(--radius);
+      box-shadow: var(--shadow); overflow: hidden;
+      display: flex; flex-direction: column;
+    }
+    .window.focused { box-shadow: 0 30px 80px rgba(0,0,0,0.65), 0 0 0 1px rgba(124,92,255,0.35); }
+    .window.maximized { border-radius: 0; }
+    .window.minimized { display: none; }
+    .window .titlebar {
+      flex: 0 0 auto; height: 34px; display: flex; align-items: center; gap: 8px;
+      padding: 0 10px; background: linear-gradient(to bottom, rgba(255,255,255,0.08), rgba(255,255,255,0.02));
+      border-bottom: 1px solid var(--border); cursor: grab;
+    }
+    .window .titlebar:active { cursor: grabbing; }
+    .window .title { flex: 1; font-size: 13px; font-weight: 500;
+                      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .window .title .app-icon { display: inline-grid; place-items: center; width: 20px; height: 20px; margin-right: 8px;
+                                font-size: 10px; font-family: var(--mono); font-weight: 700;
+                                background: rgba(255,255,255,0.08); border-radius: 5px; vertical-align: -5px;
+                                position: relative; overflow: hidden; }
+    .window .title .app-icon svg { width: 14px; height: 14px; }
+    .window .wbtn { width: 22px; height: 22px; border-radius: 50%; border: none; cursor: pointer;
+                    color: rgba(0,0,0,0); font-size: 10px; padding: 0; display: grid; place-items: center; }
+    .window .wbtn:hover { color: rgba(0,0,0,0.7); }
+    .window .wbtn.min { background: #f5bf4f; }
+    .window .wbtn.max { background: #62c555; }
+    .window .wbtn.close { background: #ff5f57; }
+    .window .content { flex: 1 1 auto; min-height: 0; position: relative; overflow: hidden;
+                        background: rgba(10,14,22,0.55); }
+    .window .resize { position: absolute; right: 0; bottom: 0; width: 14px; height: 14px; cursor: nwse-resize;
+                       background: linear-gradient(135deg, transparent 50%, rgba(255,255,255,0.25) 50%); }
+
+    #taskbar {
+      position: absolute; left: 0; right: 0; bottom: 0; height: var(--taskbar-h);
+      background: var(--glass-2); backdrop-filter: blur(18px);
+      border-top: 1px solid var(--border);
+      display: flex; align-items: center; padding: 0 10px; gap: 8px; z-index: 100;
+    }
+    #start-btn {
+      height: 32px; padding: 0 14px; border-radius: 8px; border: 1px solid var(--border);
+      background: linear-gradient(135deg, var(--accent), var(--accent-2));
+      color: #fff; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 6px;
+      box-shadow: 0 4px 12px rgba(124,92,255,0.35); letter-spacing: 0.3px;
+    }
+    #start-btn:hover { filter: brightness(1.1); }
+    #tasks { flex: 1; display: flex; gap: 4px; overflow-x: auto; }
+    #tasks::-webkit-scrollbar { height: 0; }
+    .task {
+      height: 32px; padding: 0 10px; border-radius: 7px;
+      border: 1px solid var(--border); background: rgba(255,255,255,0.05);
+      cursor: pointer; display: flex; align-items: center; gap: 6px; font-size: 12px;
+      max-width: 180px; white-space: nowrap; overflow: hidden;
+    }
+    .task:hover { background: rgba(255,255,255,0.10); }
+    .task.active { background: rgba(124,92,255,0.28); border-color: rgba(124,92,255,0.55); }
+    .task .tic { font-family: var(--mono); font-size: 9px; font-weight: 700;
+                  background: rgba(0,0,0,0.25); padding: 2px 4px; border-radius: 5px;
+                  width: 22px; height: 22px; display: grid; place-items: center; overflow: hidden; }
+    .task .tic svg { width: 14px; height: 14px; }
+    #tray { display: flex; align-items: center; gap: 10px; padding: 0 6px; font-size: 12px; color: var(--muted); }
+    #tray .btn { cursor: pointer; padding: 4px 8px; border-radius: 6px; }
+    #tray .btn:hover { background: rgba(255,255,255,0.08); color: var(--fg); }
+    #clock { font-variant-numeric: tabular-nums; color: var(--fg); }
+
+    #start-menu {
+      position: absolute; left: 10px; bottom: calc(var(--taskbar-h) + 8px); z-index: 200;
+      width: 340px; max-height: 60vh; overflow: hidden;
+      background: var(--glass-2); backdrop-filter: blur(20px);
+      border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow);
+      display: none; flex-direction: column;
+    }
+    #start-menu.open { display: flex; }
+    #start-menu .search { padding: 10px; border-bottom: 1px solid var(--border); }
+    #start-menu .search input {
+      width: 100%; padding: 8px 10px; border-radius: 8px;
+      background: rgba(255,255,255,0.06); border: 1px solid var(--border); color: var(--fg); outline: none;
+    }
+    #start-menu .search input:focus { border-color: var(--accent); }
+    #start-menu .apps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; padding: 10px; overflow-y: auto; }
+    #start-menu .sm-app {
+      display: flex; flex-direction: column; align-items: center; gap: 6px;
+      padding: 10px 6px; border-radius: 10px; cursor: pointer; border: 1px solid transparent;
+      text-align: center; font-size: 12px;
+    }
+    #start-menu .sm-app:hover { background: rgba(255,255,255,0.08); border-color: var(--border); }
+    #start-menu .sm-app .glyph { font-family: var(--mono); font-size: 13px; font-weight: 700;
+                                  width: 40px; height: 40px; display: grid; place-items: center;
+                                  border-radius: 10px; background: rgba(255,255,255,0.05); overflow: hidden; color: #fff; }
+    #start-menu .sm-app .glyph svg { width: 22px; height: 22px; }
+    #start-menu .footer { padding: 10px; border-top: 1px solid var(--border); display: flex; justify-content: space-between;
+                          align-items: center; font-size: 12px; color: var(--muted); }
+    #start-menu .footer .sm-btn { cursor: pointer; padding: 4px 10px; border-radius: 6px; }
+    #start-menu .footer .sm-btn:hover { background: rgba(255,255,255,0.08); color: var(--fg); }
+
+    #notifications {
+      position: absolute; top: 14px; right: 14px; z-index: 300;
+      display: flex; flex-direction: column; gap: 8px; max-width: 320px; pointer-events: none;
+    }
+    .notif {
+      background: var(--glass-2); backdrop-filter: blur(12px);
+      border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px;
+      box-shadow: var(--shadow); font-size: 13px; pointer-events: auto;
+      animation: slideIn 180ms ease-out;
+    }
+    .notif.ok { border-color: rgba(34,197,94,0.4); }
+    .notif.err { border-color: rgba(239,68,68,0.5); }
+    .notif .t { font-weight: 600; margin-bottom: 2px; }
+    .notif .m { color: var(--muted); font-size: 12px; }
+    @keyframes slideIn { from { transform: translateX(30px); opacity: 0; } to { transform: none; opacity: 1; } }
+
+    #ctx-menu {
+      position: absolute; z-index: 500; display: none; min-width: 180px;
+      background: var(--glass-2); backdrop-filter: blur(14px);
+      border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow);
+      padding: 4px; font-size: 13px;
+    }
+    #ctx-menu .item { padding: 7px 10px; border-radius: 6px; cursor: pointer; display: flex; align-items: center; gap: 8px; }
+    #ctx-menu .item:hover { background: rgba(124,92,255,0.25); }
+    #ctx-menu .sep { height: 1px; background: var(--border); margin: 4px 2px; }
+
+    .toolbar { display: flex; align-items: center; gap: 6px; padding: 6px 8px;
+               background: rgba(255,255,255,0.04); border-bottom: 1px solid var(--border); flex: 0 0 auto; flex-wrap: wrap; }
+    .btn { padding: 5px 10px; border-radius: 6px; border: 1px solid var(--border);
+           background: rgba(255,255,255,0.05); color: var(--fg); cursor: pointer; font-size: 12px; }
+    .btn:hover { background: rgba(255,255,255,0.10); }
+    .btn.primary { background: linear-gradient(135deg, var(--accent), var(--accent-2)); border-color: transparent; color: #fff; }
+    .btn.primary:hover { filter: brightness(1.1); }
+    .btn.danger { background: rgba(239,68,68,0.2); border-color: rgba(239,68,68,0.5); }
+    .btn.active { background: rgba(124,92,255,0.35); border-color: rgba(124,92,255,0.55); }
+    .field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+    .field input, .field select, .field textarea {
+      background: rgba(0,0,0,0.35); color: var(--fg); border: 1px solid var(--border);
+      border-radius: 6px; padding: 6px 8px; outline: none;
+    }
+    .field input:focus, .field select:focus, .field textarea:focus { border-color: var(--accent); }
+
+    /* Files */
+    .files-app { display: grid; grid-template-columns: 180px 1fr; height: 100%; }
+    .files-app .sidebar { border-right: 1px solid var(--border); background: rgba(0,0,0,0.25); padding: 6px; overflow-y: auto; }
+    .files-app .sidebar .item { padding: 6px 8px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+    .files-app .sidebar .item:hover { background: rgba(255,255,255,0.06); }
+    .files-app .sidebar .item.active { background: rgba(124,92,255,0.25); }
+    .files-app .main { display: flex; flex-direction: column; min-height: 0; }
+    .files-app .crumbs { padding: 6px 10px; font-size: 12px; color: var(--muted); border-bottom: 1px solid var(--border); }
+    .files-app .grid { flex: 1; overflow: auto; padding: 12px; display: grid;
+                       grid-template-columns: repeat(auto-fill, 96px); gap: 10px; align-content: start; }
+    .files-app .f-entry { width: 96px; min-height: 96px; display: flex; flex-direction: column; align-items: center;
+                          justify-content: flex-start; gap: 4px; padding: 6px 4px; border-radius: 8px; cursor: pointer;
+                          border: 1px solid transparent; text-align: center; }
+    .files-app .f-entry:hover { background: rgba(255,255,255,0.06); border-color: var(--border); }
+    .files-app .f-entry.selected { background: rgba(124,92,255,0.22); border-color: rgba(124,92,255,0.5); }
+    .files-app .f-entry .icon { font-size: 13px; font-family: var(--mono); font-weight: 700;
+                                width: 56px; height: 56px; display: grid; place-items: center; border-radius: 8px;
+                                background: rgba(255,255,255,0.04); overflow: hidden; }
+    .files-app .f-entry .icon img { width: 100%; height: 100%; object-fit: cover; }
+    .files-app .f-entry .name { font-size: 11px; line-height: 1.2; max-width: 92px; word-break: break-word; }
+
+    /* Paint */
+    .paint-app { display: flex; flex-direction: column; height: 100%; }
+    .paint-app .canvas-wrap {
+      flex: 1; min-height: 0; overflow: auto; background: #1b1f2a;
+      background-image: linear-gradient(45deg, #242a38 25%, transparent 25%, transparent 75%, #242a38 75%),
+                        linear-gradient(45deg, #242a38 25%, transparent 25%, transparent 75%, #242a38 75%);
+      background-size: 20px 20px; background-position: 0 0, 10px 10px;
+      display: grid; place-items: center; padding: 12px;
+    }
+    .paint-app canvas { background: #fff; box-shadow: 0 4px 20px rgba(0,0,0,0.5); cursor: crosshair; image-rendering: pixelated; }
+
+    /* Calculator */
+    .calc-app { display: flex; flex-direction: column; height: 100%; }
+    .calc-app .tabs { display: flex; border-bottom: 1px solid var(--border); }
+    .calc-app .tabs .tab { flex: 1; padding: 8px; text-align: center; cursor: pointer; font-size: 12px; color: var(--muted); }
+    .calc-app .tabs .tab.active { color: var(--fg); border-bottom: 2px solid var(--accent); }
+    .calc-app .display { padding: 14px; text-align: right; font-family: var(--mono); font-size: 26px;
+                         background: rgba(0,0,0,0.3); border-bottom: 1px solid var(--border); min-height: 72px; word-break: break-all; }
+    .calc-app .display .sub { font-size: 12px; color: var(--muted); min-height: 14px; }
+    .calc-app .keys { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; padding: 8px; }
+    .calc-app .key { padding: 14px 0; border-radius: 6px; background: rgba(255,255,255,0.05);
+                     border: 1px solid var(--border); cursor: pointer; text-align: center; font-size: 14px;
+                     font-family: var(--mono); }
+    .calc-app .key:hover { background: rgba(255,255,255,0.12); }
+    .calc-app .key.op { background: rgba(124,92,255,0.2); }
+    .calc-app .key.eq { background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #fff; font-weight: 700; }
+    .calc-app .history { padding: 8px 12px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--border);
+                         max-height: 130px; overflow-y: auto; font-family: var(--mono); }
+    .calc-app .units { padding: 14px; display: grid; gap: 12px; }
+
+    /* Terminal */
+    .term-app { height: 100%; display: flex; flex-direction: column; font-family: var(--mono); font-size: 13px;
+                background: #0a0d14; color: #d6e2ff; }
+    .term-app .out { flex: 1; overflow-y: auto; padding: 10px; white-space: pre-wrap; word-break: break-word; line-height: 1.45; }
+    .term-app .out .err { color: #ff8a8a; }
+    .term-app .out .ok  { color: #8affb3; }
+    .term-app .out .mut { color: #98a2b8; }
+    .term-app .out .cmd { color: #c3b1ff; }
+    .term-app .inline { display: flex; align-items: center; padding: 6px 10px; border-top: 1px solid var(--border); gap: 6px; }
+    .term-app .inline .prompt { color: var(--accent); font-weight: 700; }
+    .term-app .inline input { flex: 1; background: transparent; border: none; outline: none; color: inherit; font: inherit; }
+
+    /* Shader studio */
+    .shader-app { display: grid; grid-template-rows: auto 1fr auto; height: 100%; }
+    .shader-app .sh-top { display: flex; gap: 6px; padding: 6px; background: rgba(255,255,255,0.03);
+                          border-bottom: 1px solid var(--border); flex-wrap: wrap; align-items: center; }
+    .shader-app .sh-top .name { margin-left: auto; font-size: 12px; color: var(--muted); }
+    .shader-app .sh-main { display: grid; grid-template-columns: 1fr 320px; min-height: 0; }
+    .shader-app .sh-editor-wrap { position: relative; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
+    .shader-app .sh-editor {
+      flex: 1; width: 100%; background: #0b0f18; color: #e8ecf5; border: none; outline: none;
+      font-family: var(--mono); font-size: 12.5px; line-height: 1.5; padding: 10px 12px; resize: none;
+      tab-size: 2; white-space: pre; overflow: auto;
+    }
+    .shader-app .sh-preview { border-left: 1px solid var(--border); background: #000;
+                              display: grid; grid-template-rows: 1fr auto; min-height: 0; }
+    .shader-app .sh-preview canvas { width: 100%; height: 100%; display: block; }
+    .shader-app .sh-log { background: #0b0f18; border-top: 1px solid var(--border);
+                          max-height: 120px; overflow-y: auto; padding: 6px 10px;
+                          font-family: var(--mono); font-size: 11.5px; color: #ff8a8a; white-space: pre-wrap; }
+    .shader-app .sh-log.ok { color: #98a2b8; }
+    .shader-app .sh-presets { display: flex; flex-wrap: wrap; gap: 6px; padding: 6px; border-top: 1px solid var(--border); }
+
+    /* Games */
+    .game-root { position: absolute; inset: 0; overflow: hidden; background: #000; }
+    .game-root canvas { width: 100%; height: 100%; display: block; }
+    .game-hud { position: absolute; inset: 0; pointer-events: none; font-family: var(--mono);
+                text-shadow: 0 1px 3px rgba(0,0,0,0.9); font-size: 13px; }
+    .hud-tl { position: absolute; top: 10px; left: 10px; display: flex; flex-direction: column; gap: 4px; }
+    .hud-tr { position: absolute; top: 10px; right: 10px; display: flex; flex-direction: column; gap: 4px; align-items: flex-end; }
+    .hud-bl { position: absolute; bottom: 10px; left: 10px; display: flex; flex-direction: column; gap: 4px; }
+    .hud-br { position: absolute; bottom: 10px; right: 10px; display: flex; flex-direction: column; gap: 4px; align-items: flex-end; }
+    .hud-center { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); text-align: center; }
+    .hud-pill { background: rgba(0,0,0,0.55); padding: 4px 10px; border-radius: 14px; border: 1px solid rgba(255,255,255,0.15); }
+    .hud-minimap { background: rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.2); border-radius: 8px; display: block; }
+    .game-overlay {
+      position: absolute; inset: 0; background: rgba(0,0,0,0.75); color: #fff;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: 10px; text-align: center; padding: 20px; pointer-events: auto; z-index: 10;
+    }
+    .game-overlay h2 { margin: 0; font-size: 26px; }
+    .game-overlay p { margin: 0; max-width: 440px; color: #cbd5e1; font-size: 13px; line-height: 1.5; }
+    .game-overlay .keys { display: grid; grid-template-columns: auto auto; gap: 4px 14px; font-size: 12px;
+                          color: #cbd5e1; font-family: var(--mono); margin-top: 4px; }
+    .crosshair { position: absolute; left: 50%; top: 50%; width: 14px; height: 14px; margin-left: -7px; margin-top: -7px;
+                  pointer-events: none; z-index: 3; }
+    .crosshair::before, .crosshair::after {
+      content: ""; position: absolute; background: rgba(255,255,255,0.8);
+    }
+    .crosshair::before { left: 6px; top: 0; width: 2px; height: 14px; }
+    .crosshair::after { top: 6px; left: 0; height: 2px; width: 14px; }
+
+    /* Wallpaper picker */
+    .wp-app { display: flex; flex-direction: column; height: 100%; }
+    .wp-app .tabs { display: flex; border-bottom: 1px solid var(--border); }
+    .wp-app .tabs .tab { padding: 8px 14px; cursor: pointer; font-size: 12px; color: var(--muted); border-bottom: 2px solid transparent; }
+    .wp-app .tabs .tab.active { color: var(--fg); border-bottom-color: var(--accent); }
+    .wp-app .body { flex: 1; overflow: auto; padding: 12px; display: grid;
+                    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; align-content: start; }
+    .wp-app .thumb { aspect-ratio: 16/10; border-radius: 8px; border: 1px solid var(--border); cursor: pointer; overflow: hidden;
+                      position: relative; background: #000; }
+    .wp-app .thumb:hover { transform: translateY(-1px); }
+    .wp-app .thumb.selected { outline: 2px solid var(--accent); }
+    .wp-app .thumb .label { position: absolute; left: 6px; bottom: 6px; font-size: 11px; padding: 2px 6px; border-radius: 4px;
+                             background: rgba(0,0,0,0.55); }
+    .wp-app .thumb canvas, .wp-app .thumb img, .wp-app .thumb .grad {
+      position: absolute; inset: 0; width: 100%; height: 100%; display: block; object-fit: cover;
+    }
+
+    /* About */
+    .about-app { padding: 18px 24px; overflow-y: auto; height: 100%; line-height: 1.6; font-size: 13.5px; }
+    .about-app h1 { margin: 0 0 4px 0; font-size: 22px; }
+    .about-app h2 { margin: 18px 0 4px 0; font-size: 15px; color: var(--accent-2); }
+    .about-app code { font-family: var(--mono); background: rgba(255,255,255,0.06); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+    .about-app ul { margin: 6px 0 6px 18px; }
+    .about-app .note { color: var(--muted); font-size: 12.5px; margin-top: 10px; }
+    .about-app .kbd { font-family: var(--mono); background: rgba(255,255,255,0.08);
+                      padding: 1px 5px; border-radius: 4px; font-size: 11px; border: 1px solid var(--border); }
+
+    ::-webkit-scrollbar { width: 10px; height: 10px; }
+    ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 5px; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
+    ::-webkit-scrollbar-track { background: transparent; }
+  </style>
+</head>
+<body>
+
+<div id="desktop">
+  <canvas id="wallpaper"></canvas>
+  <div id="icon-grid"></div>
+</div>
+
+<div id="taskbar">
+  <button id="start-btn" title="Start (Ctrl+Space)">Opus</button>
+  <div id="tasks"></div>
+  <div id="tray">
+    <span class="btn" id="wp-quick" title="Change wallpaper">Wallpaper</span>
+    <span id="clock">--:--</span>
+  </div>
+</div>
+
+<div id="start-menu">
+  <div class="search"><input id="sm-search" placeholder="Search apps..." autocomplete="off" /></div>
+  <div class="apps" id="sm-apps"></div>
+  <div class="footer">
+    <span>Opus Browser OS 4.7</span>
+    <span class="sm-btn" id="sm-about">About</span>
+  </div>
+</div>
+
+<div id="notifications"></div>
+<div id="ctx-menu"></div>
+
+<script type="module">
+import * as THREE from "three";
+
+/* =============================================================================
+   HELPER: h() — tiny DOM builder
+   ============================================================================= */
+function h(tag, attrs = {}, ...children) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (v == null || v === false) continue;
+    if (k === "class") e.className = v;
+    else if (k === "style") e.style.cssText = v;
+    else if (k.startsWith("on") && typeof v === "function") e.addEventListener(k.slice(2).toLowerCase(), v);
+    else if (v === true) e.setAttribute(k, "");
+    else e.setAttribute(k, v);
+  }
+  for (const c of children.flat()) {
+    if (c == null || c === false) continue;
+    e.appendChild(typeof c === "string" || typeof c === "number" ? document.createTextNode(String(c)) : c);
+  }
+  return e;
+}
+
+/* =============================================================================
+   OS NAMESPACE
+   ============================================================================= */
+const OS = window.OS = { three: THREE };
+
+/* --------------------------------- Notify --------------------------------- */
+OS.notify = new (class Notify {
+  constructor() { this.root = document.getElementById("notifications"); }
+  push(title, msg, kind = "info", timeout = 3200) {
+    const el = h("div", { class: "notif" + (kind === "ok" ? " ok" : kind === "err" ? " err" : "") },
+      h("div", { class: "t" }, title),
+      h("div", { class: "m" }, msg || ""));
+    this.root.appendChild(el);
+    setTimeout(() => {
+      el.style.transition = "opacity .25s, transform .25s";
+      el.style.opacity = 0; el.style.transform = "translateX(30px)";
+      setTimeout(() => el.remove(), 260);
+    }, timeout);
+    return el;
+  }
+  ok(t, m)  { return this.push(t, m, "ok"); }
+  err(t, m) { return this.push(t, m, "err", 4500); }
+})();
+
+/* --------------------------------- VFS --------------------------------- */
+OS.vfs = new (class VFS {
+  constructor(key = "opus-vfs-v1") {
+    this.key = key;
+    this.root = this._load() || this._fresh();
+    this._save();
+  }
+  _fresh() {
+    return {
+      type: "dir", name: "", children: {
+        "Documents": { type: "dir", name: "Documents", children: {
+          "welcome.txt": { type: "file", name: "welcome.txt", mime: "text/plain",
+            data: "Welcome to Opus Browser OS.\n\nOpen the Terminal and type `help` to explore.\n\nTip: press Ctrl+Space to open the Start menu." }
+        } },
+        "Pictures":  { type: "dir", name: "Pictures",  children: {} },
+        "Shaders":   { type: "dir", name: "Shaders",   children: {} },
+        "Worlds":    { type: "dir", name: "Worlds",    children: {} },
+      }
+    };
+  }
+  _load() { try { return JSON.parse(localStorage.getItem(this.key) || "null"); } catch { return null; } }
+  _save() { try { localStorage.setItem(this.key, JSON.stringify(this.root)); }
+            catch (e) { OS.notify.err("VFS", "Save failed: " + e.message); } }
+  _norm(p) {
+    if (!p || p === "/") return [];
+    const out = [];
+    for (const s of p.split("/").filter(Boolean)) {
+      if (s === ".") continue;
+      if (s === "..") out.pop();
+      else out.push(s);
+    }
+    return out;
+  }
+  _walk(parts, { create = false, isDir = false } = {}) {
+    let node = this.root;
+    for (let i = 0; i < parts.length; i++) {
+      const p = parts[i];
+      if (node.type !== "dir") return null;
+      if (!node.children[p]) {
+        if (!create) return null;
+        node.children[p] = (i === parts.length - 1 && !isDir)
+          ? { type: "file", name: p, mime: "text/plain", data: "" }
+          : { type: "dir", name: p, children: {} };
+      }
+      node = node.children[p];
+    }
+    return node;
+  }
+  exists(p) { return !!this._walk(this._norm(p)); }
+  read(p)   { const n = this._walk(this._norm(p)); return (n && n.type === "file") ? n : null; }
+  list(p)   { const n = this._walk(this._norm(p));
+              return (n && n.type === "dir")
+                ? Object.values(n.children).sort((a,b) => a.type === b.type ? a.name.localeCompare(b.name) : (a.type === "dir" ? -1 : 1))
+                : null; }
+  mkdir(p)  { this._walk(this._norm(p), { create: true, isDir: true }); this._save(); }
+  write(p, data, mime = "text/plain") {
+    const parts = this._norm(p); if (!parts.length) return false;
+    const name = parts.pop();
+    const dir = this._walk(parts, { create: true, isDir: true });
+    if (!dir || dir.type !== "dir") return false;
+    dir.children[name] = { type: "file", name, mime, data };
+    this._save(); return true;
+  }
+  remove(p) {
+    const parts = this._norm(p); if (!parts.length) return false;
+    const name = parts.pop();
+    const dir = this._walk(parts);
+    if (!dir || !dir.children[name]) return false;
+    delete dir.children[name]; this._save(); return true;
+  }
+  move(from, to) {
+    const sp = this._norm(from); if (!sp.length) return false;
+    const sn = sp[sp.length - 1];
+    const sd = this._walk(sp.slice(0, -1));
+    if (!sd || !sd.children[sn]) return false;
+    const node = sd.children[sn];
+    const dp = this._norm(to); const dn = dp.pop();
+    const dd = this._walk(dp, { create: true, isDir: true });
+    if (!dd) return false;
+    dd.children[dn] = node; node.name = dn;
+    delete sd.children[sn];
+    this._save(); return true;
+  }
+})();
+
+/* --------------------------------- WindowManager --------------------------------- */
+OS.wm = new (class WindowManager {
+  constructor() {
+    this.desktop = document.getElementById("desktop");
+    this.windows = new Map();
+    this.zTop = 10; this.nextId = 1; this.focused = null;
+    this._tick = this._tick.bind(this);
+    requestAnimationFrame(this._tick);
+  }
+  _tick(now) {
+    for (const w of this.windows.values()) {
+      if (!w.minimized && w.hooks?.onTick) {
+        try { w.hooks.onTick(now); } catch (e) { console.error(e); }
+      }
+    }
+    requestAnimationFrame(this._tick);
+  }
+  open(app, opts = {}) {
+    if (app.singleton) {
+      for (const w of this.windows.values()) {
+        if (w.appId === app.id) { this.focus(w.id); if (w.minimized) this.toggleMinimize(w.id); return w; }
+      }
+    }
+    const id = "win-" + (this.nextId++);
+    const w = {
+      id, appId: app.id, title: opts.title || app.title, app,
+      x: opts.x ?? 80 + (this.windows.size * 24) % 220,
+      y: opts.y ?? 60 + (this.windows.size * 24) % 160,
+      width:  opts.width  ?? app.defaultSize?.w ?? 640,
+      height: opts.height ?? app.defaultSize?.h ?? 440,
+      minimized: false, maximized: false, prevRect: null,
+      el: null, contentEl: null, hooks: {},
+    };
+    const el = h("div", { class: "window" },
+      h("div", { class: "titlebar" },
+        h("button", { class: "wbtn close", title: "Close" }, "x"),
+        h("button", { class: "wbtn min", title: "Minimize" }, "_"),
+        h("button", { class: "wbtn max", title: "Maximize" }, "+"),
+        (() => { const ti = h("span", { class: "app-icon" }); if (typeof setGlyph === "function") setGlyph(ti, app); else ti.textContent = app.icon || "";
+                  return h("div", { class: "title" }, ti, h("span", { class: "ttext" }, w.title)); })()),
+      h("div", { class: "content" }),
+      h("div", { class: "resize" }));
+    el.style.left = w.x + "px"; el.style.top = w.y + "px";
+    el.style.width = w.width + "px"; el.style.height = w.height + "px";
+    w.el = el; w.contentEl = el.querySelector(".content");
+
+    const tb = el.querySelector(".titlebar");
+    tb.addEventListener("mousedown", (e) => {
+      if (e.target.closest(".wbtn") || w.maximized) return;
+      this.focus(w.id);
+      const sx = e.clientX, sy = e.clientY, ox = w.x, oy = w.y;
+      const move = (ev) => {
+        w.x = Math.max(-w.width + 80, Math.min(window.innerWidth - 60, ox + ev.clientX - sx));
+        w.y = Math.max(0, Math.min(window.innerHeight - 50, oy + ev.clientY - sy));
+        el.style.left = w.x + "px"; el.style.top = w.y + "px";
+      };
+      const up = () => { document.removeEventListener("mousemove", move); document.removeEventListener("mouseup", up); };
+      document.addEventListener("mousemove", move); document.addEventListener("mouseup", up);
+    });
+    tb.addEventListener("dblclick", (e) => { if (!e.target.closest(".wbtn")) this.toggleMaximize(w.id); });
+    el.querySelector(".wbtn.close").addEventListener("click", () => this.close(w.id));
+    el.querySelector(".wbtn.min").addEventListener("click", () => this.toggleMinimize(w.id));
+    el.querySelector(".wbtn.max").addEventListener("click", () => this.toggleMaximize(w.id));
+    el.addEventListener("mousedown", () => this.focus(w.id), true);
+
+    el.querySelector(".resize").addEventListener("mousedown", (e) => {
+      e.stopPropagation(); if (w.maximized) return;
+      const sx = e.clientX, sy = e.clientY, ow = w.width, oh = w.height;
+      const move = (ev) => {
+        w.width  = Math.max(260, ow + ev.clientX - sx);
+        w.height = Math.max(180, oh + ev.clientY - sy);
+        el.style.width = w.width + "px"; el.style.height = w.height + "px";
+        this._fireResize(w);
+      };
+      const up = () => { document.removeEventListener("mousemove", move); document.removeEventListener("mouseup", up); };
+      document.addEventListener("mousemove", move); document.addEventListener("mouseup", up);
+    });
+
+    this.desktop.appendChild(el);
+    this.windows.set(id, w);
+    try { w.hooks = app.mount(w.contentEl, { win: w, os: OS }) || {}; }
+    catch (e) { console.error(e); w.contentEl.innerHTML = `<div style="padding:16px;color:#ff8a8a;">${e.message}</div>`; }
+    this.focus(id);
+    this._renderTaskbar();
+    return w;
+  }
+  _fireResize(w) {
+    if (w.hooks?.onResize) {
+      try { w.hooks.onResize(w.contentEl.clientWidth, w.contentEl.clientHeight); } catch (e) { console.error(e); }
+    }
+  }
+  focus(id) {
+    const w = this.windows.get(id); if (!w) return;
+    this.zTop++; w.el.style.zIndex = this.zTop;
+    for (const ww of this.windows.values()) ww.el.classList.remove("focused");
+    w.el.classList.add("focused");
+    this.focused = id;
+    if (w.hooks?.onFocus) try { w.hooks.onFocus(true); } catch(e){}
+    this._renderTaskbar();
+  }
+  toggleMinimize(id) {
+    const w = this.windows.get(id); if (!w) return;
+    w.minimized = !w.minimized;
+    w.el.classList.toggle("minimized", w.minimized);
+    if (w.minimized && w.hooks?.onFocus) try { w.hooks.onFocus(false); } catch(e){}
+    else if (!w.minimized) this.focus(id);
+    this._renderTaskbar();
+  }
+  toggleMaximize(id) {
+    const w = this.windows.get(id); if (!w) return;
+    if (!w.maximized) {
+      w.prevRect = { x: w.x, y: w.y, width: w.width, height: w.height };
+      w.x = 0; w.y = 0; w.width = window.innerWidth; w.height = window.innerHeight - 46;
+    } else if (w.prevRect) Object.assign(w, w.prevRect);
+    w.maximized = !w.maximized;
+    w.el.classList.toggle("maximized", w.maximized);
+    w.el.style.left = w.x + "px"; w.el.style.top = w.y + "px";
+    w.el.style.width = w.width + "px"; w.el.style.height = w.height + "px";
+    this._fireResize(w);
+  }
+  close(id) {
+    const w = this.windows.get(id); if (!w) return;
+    if (w.hooks?.onClose) try { w.hooks.onClose(); } catch(e){}
+    w.el.remove();
+    this.windows.delete(id);
+    this._renderTaskbar();
+  }
+  _renderTaskbar() {
+    const tasks = document.getElementById("tasks");
+    tasks.innerHTML = "";
+    for (const w of this.windows.values()) {
+      const tic = h("span", { class: "tic" }); if (typeof setGlyph === "function") setGlyph(tic, w.app); else tic.textContent = w.app.icon || "";
+      const t = h("div", { class: "task" + (this.focused === w.id && !w.minimized ? " active" : ""),
+                            onclick: () => {
+                              if (w.minimized) this.toggleMinimize(w.id);
+                              else if (this.focused === w.id) this.toggleMinimize(w.id);
+                              else this.focus(w.id);
+                            } },
+        tic,
+        h("span", {}, w.title));
+      tasks.appendChild(t);
+    }
+  }
+  list() { return [...this.windows.values()]; }
+})();
+
+/* --------------------------------- AppRegistry --------------------------------- */
+OS.apps = new (class AppRegistry {
+  constructor() { this.apps = new Map(); }
+  register(app) { this.apps.set(app.id, app); return app; }
+  get(id) { return this.apps.get(id); }
+  list() { return [...this.apps.values()]; }
+  open(id, opts) {
+    const a = this.apps.get(id);
+    if (!a) { OS.notify.err("App not found", id); return null; }
+    return OS.wm.open(a, opts);
+  }
+  close(id) { for (const w of OS.wm.list()) if (w.appId === id) OS.wm.close(w.id); }
+})();
+
+/* =============================================================================
+   WALLPAPER ENGINE
+   ============================================================================= */
+const WP_PRESETS = {
+  "Aurora": `precision highp float;
+uniform float u_time; uniform vec2 u_resolution; uniform float u_audio;
+float hash(vec2 p){ return fract(sin(dot(p, vec2(41.3, 289.1)))*43758.5453); }
+float noise(vec2 p){ vec2 i = floor(p), f = fract(p); f = f*f*(3.0-2.0*f);
+  return mix(mix(hash(i), hash(i+vec2(1.0,0.0)), f.x), mix(hash(i+vec2(0.0,1.0)), hash(i+vec2(1.0,1.0)), f.x), f.y); }
+float fbm(vec2 p){ float v=0.0, a=0.5; for (int i=0;i<5;i++){ v+=a*noise(p); p*=2.02; a*=0.5; } return v; }
+void main(){
+  vec2 uv = gl_FragCoord.xy/u_resolution.xy;
+  vec2 p = (uv-0.5)*vec2(u_resolution.x/u_resolution.y, 1.0);
+  float t = u_time*0.08;
+  float bands=0.0;
+  for (int i=0;i<3;i++){
+    float k=float(i)*0.6+1.0;
+    float y = fbm(vec2(p.x*1.8+t*k, t*0.4+float(i)*3.0))*0.8-0.3+float(i)*0.15;
+    bands += smoothstep(0.05+0.02*u_audio, 0.0, abs(p.y - y));
+  }
+  vec3 c1 = vec3(0.10, 0.95, 0.70);
+  vec3 c2 = vec3(0.40, 0.25, 0.95);
+  vec3 c3 = vec3(0.95, 0.35, 0.80);
+  vec3 col = mix(c1, c2, uv.y);
+  col = mix(col, c3, bands*0.8);
+  col += 0.15*bands;
+  col *= smoothstep(0.0, 0.3, uv.y)*0.8 + 0.2;
+  float sp = step(0.997, hash(floor(gl_FragCoord.xy*0.7)+floor(u_time)));
+  col += sp*vec3(0.9);
+  gl_FragColor = vec4(col, 1.0);
+}`,
+  "Plasma": `precision highp float;
+uniform float u_time; uniform vec2 u_resolution; uniform float u_audio;
+void main(){
+  vec2 uv = (gl_FragCoord.xy/u_resolution.xy-0.5)*vec2(u_resolution.x/u_resolution.y, 1.0);
+  float t = u_time*0.4 + u_audio*2.0;
+  float v = sin(uv.x*8.0 + t) + sin(uv.y*6.0 - t*1.3) + sin((uv.x+uv.y)*7.0 + t*0.7) + sin(length(uv)*10.0 - t*1.8);
+  v /= 4.0;
+  vec3 col = 0.5 + 0.5*cos(v*3.14 + vec3(0.0, 2.0, 4.0));
+  gl_FragColor = vec4(col, 1.0);
+}`,
+  "Starfield": `precision highp float;
+uniform float u_time; uniform vec2 u_resolution;
+float hash(vec3 p){ return fract(sin(dot(p, vec3(17.1, 31.3, 59.7)))*43758.5453); }
+void main(){
+  vec2 uv = gl_FragCoord.xy/u_resolution.xy - 0.5;
+  uv.x *= u_resolution.x/u_resolution.y;
+  vec3 col = vec3(0.01, 0.01, 0.03);
+  for (int i=0;i<4;i++){
+    float depth = float(i)+1.0;
+    float speed = u_time*0.04*depth;
+    vec2 p = uv*depth*4.0 + vec2(speed, speed*0.3);
+    vec2 g = floor(p); vec2 f = fract(p);
+    float hh = hash(vec3(g, depth));
+    vec2 sp = vec2(hh, fract(hh*57.0));
+    float d = distance(f, sp);
+    float b = smoothstep(0.04/depth, 0.0, d);
+    col += b*vec3(0.9, 0.9, 1.0)/depth;
+  }
+  gl_FragColor = vec4(col, 1.0);
+}`,
+  "Fractal": `precision highp float;
+uniform float u_time; uniform vec2 u_resolution; uniform vec2 u_mouse;
+void main(){
+  vec2 uv = (gl_FragCoord.xy/u_resolution.xy-0.5); uv.x *= u_resolution.x/u_resolution.y;
+  vec2 c = uv*2.0 + vec2(cos(u_time*0.15)*0.3, sin(u_time*0.1)*0.3) + (u_mouse-0.5)*0.5;
+  vec2 z = vec2(0.0); float m=0.0;
+  for (int i=0;i<64;i++){
+    z = vec2(z.x*z.x - z.y*z.y, 2.0*z.x*z.y) + c;
+    if (dot(z,z) > 4.0) { m = float(i)/64.0; break; }
+  }
+  vec3 col = 0.5 + 0.5*cos(vec3(0.0, 2.1, 4.2) + m*6.0 + u_time*0.3);
+  col *= step(0.001, m);
+  gl_FragColor = vec4(col, 1.0);
+}`,
+  "Matrix": `precision highp float;
+uniform float u_time; uniform vec2 u_resolution;
+float hash(vec2 p){ return fract(sin(dot(p, vec2(41.3, 289.1)))*43758.5453); }
+void main(){
+  vec2 uv = gl_FragCoord.xy/u_resolution.xy;
+  float cols = 80.0;
+  float cx = floor(uv.x*cols);
+  float speed = 0.5 + hash(vec2(cx, 0.0))*1.5;
+  float y = fract(uv.y - u_time*speed*0.3);
+  float row = floor(y*40.0);
+  float glyph = step(0.5, hash(vec2(cx, row + floor(u_time*speed*12.0))));
+  float trail = pow(1.0 - y, 3.0);
+  vec3 col = vec3(0.1, 1.0, 0.3)*glyph*trail;
+  col += vec3(0.7, 1.0, 0.8)*step(0.99, 1.0-y)*glyph;
+  gl_FragColor = vec4(col, 1.0);
+}`,
+  "AudioBars": `precision highp float;
+uniform float u_time; uniform vec2 u_resolution; uniform float u_audio; uniform float u_cpu;
+void main(){
+  vec2 uv = gl_FragCoord.xy/u_resolution.xy;
+  float bars = 24.0;
+  float b = floor(uv.x*bars);
+  float h = 0.2 + 0.7*abs(sin(b*0.7 + u_time*1.5))*(0.5 + u_audio*1.5);
+  float lit = step(1.0 - h, uv.y);
+  vec3 col = mix(vec3(0.1,0.2,0.4), vec3(0.2+u_cpu,0.6,1.0), uv.y) * lit;
+  col += vec3(0.5, 0.2, 0.8)*lit*(0.5 + 0.5*sin(u_time+b));
+  col *= smoothstep(0.02, 0.0, abs(fract(uv.x*bars) - 0.5) - 0.45);
+  gl_FragColor = vec4(col, 1.0);
+}`,
+};
+const WP_GRADIENTS = [
+  { name: "Indigo",  css: "linear-gradient(135deg, #0b1020 0%, #171a2e 50%, #2a1a4a 100%)" },
+  { name: "Sunset",  css: "linear-gradient(180deg, #0b0925 0%, #5b1f5e 55%, #f97e5f 100%)" },
+  { name: "Ocean",   css: "linear-gradient(180deg, #021f2d 0%, #0a4a6e 55%, #7bc9e9 100%)" },
+  { name: "Mint",    css: "linear-gradient(135deg, #022a2a 0%, #014f4b 50%, #a7e7c6 100%)" },
+  { name: "Nebula",  css: "radial-gradient(ellipse at 30% 20%, #8c2bff 0%, #2a0449 40%, #050018 80%)" },
+  { name: "Slate",   css: "linear-gradient(160deg, #0a0d14 0%, #1a2130 100%)" },
+];
+
+OS.wallpaper = new (class Wallpaper {
+  constructor() {
+    this.canvas = document.getElementById("wallpaper");
+    this.mode = null; this.currentName = "Aurora";
+    this.state = { time0: performance.now(), mouse: [0.5, 0.5], audio: 0, cpu: 0, lastT: performance.now() };
+    this.gl = null; this.program = null; this.vbo = null; this.uniforms = {};
+    this.mic = { enabled: false, analyser: null, data: null };
+    this.shaderSrc = null;
+    this._initGL();
+    this._resize();
+    window.addEventListener("resize", () => this._resize());
+    window.addEventListener("mousemove", (e) => {
+      this.state.mouse[0] = e.clientX / window.innerWidth;
+      this.state.mouse[1] = 1 - (e.clientY / window.innerHeight);
+    });
+    this._renderLoop();
+    this.setPreset("Aurora");
+  }
+  _initGL() {
+    const gl = this.canvas.getContext("webgl", { antialias: false, preserveDrawingBuffer: false });
+    if (!gl) return;
+    this.gl = gl;
+    this.vbo = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.vbo);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, -1,1, 1,-1, 1,1]), gl.STATIC_DRAW);
+  }
+  _resize() {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const w = Math.floor(window.innerWidth * dpr);
+    const hh = Math.floor(window.innerHeight * dpr);
+    this.canvas.width = w; this.canvas.height = hh;
+    if (this.gl) this.gl.viewport(0, 0, w, hh);
+  }
+  _compile(src, type) {
+    const gl = this.gl;
+    const s = gl.createShader(type);
+    gl.shaderSource(s, src); gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+      const log = gl.getShaderInfoLog(s);
+      gl.deleteShader(s); throw new Error(log);
+    }
+    return s;
+  }
+  setShader(src) {
+    if (!this.gl) return { ok: false, log: "No WebGL" };
+    const gl = this.gl;
+    try {
+      const vs = this._compile(`attribute vec2 pos; void main(){ gl_Position = vec4(pos,0,1); }`, gl.VERTEX_SHADER);
+      const fs = this._compile(src, gl.FRAGMENT_SHADER);
+      const p = gl.createProgram();
+      gl.attachShader(p, vs); gl.attachShader(p, fs); gl.linkProgram(p);
+      if (!gl.getProgramParameter(p, gl.LINK_STATUS)) {
+        const log = gl.getProgramInfoLog(p);
+        gl.deleteProgram(p);
+        return { ok: false, log };
+      }
+      if (this.program) gl.deleteProgram(this.program);
+      this.program = p;
+      this.uniforms = {
+        u_time:       gl.getUniformLocation(p, "u_time"),
+        u_resolution: gl.getUniformLocation(p, "u_resolution"),
+        u_mouse:      gl.getUniformLocation(p, "u_mouse"),
+        u_audio:      gl.getUniformLocation(p, "u_audio"),
+        u_cpu:        gl.getUniformLocation(p, "u_cpu"),
+        pos:          gl.getAttribLocation(p, "pos"),
+      };
+      this.mode = "shader";
+      this.canvas.style.background = "#000";
+      this.shaderSrc = src;
+      return { ok: true, log: "" };
+    } catch (e) { return { ok: false, log: e.message }; }
+  }
+  setPreset(name) {
+    const src = WP_PRESETS[name]; if (!src) return { ok: false, log: "Unknown preset" };
+    const r = this.setShader(src);
+    if (r.ok) { this.currentName = name;
+                localStorage.setItem("opus-wp", JSON.stringify({ kind: "preset", name })); }
+    return r;
+  }
+  setGradient(g) {
+    this.mode = "gradient";
+    this.currentName = g.name || "Gradient";
+    this.canvas.style.background = g.css;
+    if (this.gl) { this.gl.clearColor(0,0,0,0); this.gl.clear(this.gl.COLOR_BUFFER_BIT); }
+    this.program = null;
+    localStorage.setItem("opus-wp", JSON.stringify({ kind: "gradient", name: g.name, css: g.css }));
+  }
+  setImage(dataUrl, name = "Image") {
+    this.mode = "image"; this.currentName = name;
+    this.canvas.style.background = `center/cover no-repeat url("${dataUrl}")`;
+    if (this.gl) { this.gl.clearColor(0,0,0,0); this.gl.clear(this.gl.COLOR_BUFFER_BIT); }
+    this.program = null;
+    try { localStorage.setItem("opus-wp", JSON.stringify({ kind: "image", dataUrl, name })); }
+    catch { OS.notify.err("Wallpaper", "Image too large to persist (but applied)."); }
+  }
+  setCustomShader(name, src) {
+    const r = this.setShader(src);
+    if (r.ok) { this.currentName = name;
+                localStorage.setItem("opus-wp", JSON.stringify({ kind: "shader", name, src })); }
+    return r;
+  }
+  async enableMic() {
+    if (this.mic.enabled) return true;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const src = ctx.createMediaStreamSource(stream);
+      const an = ctx.createAnalyser(); an.fftSize = 64;
+      src.connect(an);
+      this.mic = { enabled: true, analyser: an, data: new Uint8Array(an.frequencyBinCount) };
+      OS.notify.ok("Microphone", "Shader wallpapers are now audio-reactive.");
+      return true;
+    } catch (e) { OS.notify.err("Microphone", e.message); return false; }
+  }
+  _renderLoop() {
+    const frame = (now) => {
+      const dt = now - this.state.lastT;
+      this.state.lastT = now;
+      this.state.cpu = Math.max(0, Math.min(1, (dt - 16) / 24));
+      if (this.mic.enabled && this.mic.analyser) {
+        this.mic.analyser.getByteFrequencyData(this.mic.data);
+        let sum = 0; for (const v of this.mic.data) sum += v;
+        const avg = sum / this.mic.data.length / 255;
+        this.state.audio += (avg - this.state.audio) * 0.2;
+      } else this.state.audio *= 0.95;
+
+      if (this.mode === "shader" && this.gl && this.program) {
+        const gl = this.gl;
+        gl.useProgram(this.program);
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.vbo);
+        gl.enableVertexAttribArray(this.uniforms.pos);
+        gl.vertexAttribPointer(this.uniforms.pos, 2, gl.FLOAT, false, 0, 0);
+        gl.uniform1f(this.uniforms.u_time, (now - this.state.time0) / 1000);
+        gl.uniform2f(this.uniforms.u_resolution, this.canvas.width, this.canvas.height);
+        gl.uniform2f(this.uniforms.u_mouse, this.state.mouse[0], this.state.mouse[1]);
+        gl.uniform1f(this.uniforms.u_audio, this.state.audio);
+        gl.uniform1f(this.uniforms.u_cpu, this.state.cpu);
+        gl.drawArrays(gl.TRIANGLES, 0, 6);
+      }
+      requestAnimationFrame(frame);
+    };
+    requestAnimationFrame(frame);
+  }
+  // Preview-render a shader to an external canvas (used by thumbnails / Shader Studio preview).
+  // Returns a controller with dispose().
+  static livePreview(canvas, src, opts = {}) {
+    const gl = canvas.getContext("webgl", { antialias: false });
+    if (!gl) return { dispose: () => {}, error: "No WebGL" };
+    const vbo = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, -1,1, 1,-1, 1,1]), gl.STATIC_DRAW);
+    const compile = (s, t) => {
+      const sh = gl.createShader(t); gl.shaderSource(sh, s); gl.compileShader(sh);
+      if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) { const log = gl.getShaderInfoLog(sh); gl.deleteShader(sh); throw new Error(log); }
+      return sh;
+    };
+    let prog, uni = {};
+    let error = null;
+    try {
+      const vs = compile(`attribute vec2 pos; void main(){ gl_Position = vec4(pos,0,1);}`, gl.VERTEX_SHADER);
+      const fs = compile(src, gl.FRAGMENT_SHADER);
+      prog = gl.createProgram(); gl.attachShader(prog, vs); gl.attachShader(prog, fs); gl.linkProgram(prog);
+      if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+      uni = {
+        u_time:       gl.getUniformLocation(prog, "u_time"),
+        u_resolution: gl.getUniformLocation(prog, "u_resolution"),
+        u_mouse:      gl.getUniformLocation(prog, "u_mouse"),
+        u_audio:      gl.getUniformLocation(prog, "u_audio"),
+        u_cpu:        gl.getUniformLocation(prog, "u_cpu"),
+        pos:          gl.getAttribLocation(prog, "pos"),
+      };
+    } catch (e) { error = e.message; }
+    const t0 = performance.now();
+    let alive = true;
+    const frame = (now) => {
+      if (!alive) return;
+      if (canvas.width !== canvas.clientWidth || canvas.height !== canvas.clientHeight) {
+        canvas.width = Math.max(8, canvas.clientWidth);
+        canvas.height = Math.max(8, canvas.clientHeight);
+        gl.viewport(0,0,canvas.width, canvas.height);
+      }
+      if (prog) {
+        gl.useProgram(prog);
+        gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+        gl.enableVertexAttribArray(uni.pos);
+        gl.vertexAttribPointer(uni.pos, 2, gl.FLOAT, false, 0, 0);
+        gl.uniform1f(uni.u_time, (now - t0)/1000);
+        gl.uniform2f(uni.u_resolution, canvas.width, canvas.height);
+        gl.uniform2f(uni.u_mouse, 0.5, 0.5);
+        gl.uniform1f(uni.u_audio, 0);
+        gl.uniform1f(uni.u_cpu, 0);
+        gl.drawArrays(gl.TRIANGLES, 0, 6);
+      } else {
+        gl.clearColor(0.1, 0.05, 0.1, 1); gl.clear(gl.COLOR_BUFFER_BIT);
+      }
+      requestAnimationFrame(frame);
+    };
+    requestAnimationFrame(frame);
+    return { dispose: () => { alive = false; if (prog) gl.deleteProgram(prog); gl.deleteBuffer(vbo); }, error };
+  }
+})();
+// Load persisted wallpaper if any
+(() => {
+  try {
+    const s = JSON.parse(localStorage.getItem("opus-wp") || "null"); if (!s) return;
+    if (s.kind === "preset") OS.wallpaper.setPreset(s.name);
+    else if (s.kind === "gradient") OS.wallpaper.setGradient({ name: s.name, css: s.css });
+    else if (s.kind === "image") OS.wallpaper.setImage(s.dataUrl, s.name);
+    else if (s.kind === "shader") OS.wallpaper.setCustomShader(s.name || "Custom", s.src);
+  } catch {}
+})();
+
+/* --------------------------------- Hotkeys --------------------------------- */
+document.addEventListener("keydown", (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.code === "Space") {
+    const sm = document.getElementById("start-menu");
+    const open = !sm.classList.contains("open");
+    sm.classList.toggle("open", open);
+    if (open) { document.getElementById("sm-search").value = ""; renderStartApps(""); setTimeout(() => document.getElementById("sm-search").focus(), 20); }
+    e.preventDefault();
+  } else if (e.code === "Escape") {
+    document.getElementById("start-menu").classList.remove("open");
+  }
+});
+
+/* --------------------------------- Clock --------------------------------- */
+function updateClock() {
+  const d = new Date(), pad = n => String(n).padStart(2, "0");
+  document.getElementById("clock").textContent = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+setInterval(updateClock, 15000); updateClock();
+
+/* --------------------------------- Start Menu & Icons --------------------------------- */
+const smApps    = document.getElementById("sm-apps");
+const smSearch  = document.getElementById("sm-search");
+const startMenu = document.getElementById("start-menu");
+const startBtn  = document.getElementById("start-btn");
+
+// Per-app SVG glyph art. Keep them simple, monochrome, 24x24 viewBox.
+const APP_GLYPHS = {
+  "wallpaper": `<svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M3 14l5-5 4 4 3-3 6 6"/><circle cx="9" cy="9" r="1.4" fill="white" stroke="none"/></svg>`,
+  "calc": `<svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="18" rx="2"/><rect x="7" y="6" width="10" height="3" fill="white" stroke="none" rx="0.6"/><circle cx="8.5" cy="13" r="0.9" fill="white"/><circle cx="12" cy="13" r="0.9" fill="white"/><circle cx="15.5" cy="13" r="0.9" fill="white"/><circle cx="8.5" cy="17" r="0.9" fill="white"/><circle cx="12" cy="17" r="0.9" fill="white"/><circle cx="15.5" cy="17" r="0.9" fill="white"/></svg>`,
+  "files": `<svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>`,
+  "paint": `<svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M15 4l5 5-9 9H6v-5z"/><path d="M14 5l5 5"/><path d="M4 21c1-2 3-2 4-0.5"/></svg>`,
+  "terminal": `<svg viewBox="0 0 24 24" fill="none" stroke="#7c5cff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2" stroke="rgba(255,255,255,0.35)"/><path d="M7 9l3 3-3 3"/><path d="M12 15h6" stroke="#00e0a4"/></svg>`,
+  "shader-studio": `<svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8"/><path d="M4 12c4-5 12-5 16 0"/><path d="M4 12c4 5 12 5 16 0"/><circle cx="12" cy="12" r="2" fill="white" stroke="none"/></svg>`,
+  "los-santos": `<svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l2-6h14l2 6"/><path d="M3 17v3h3v-2h12v2h3v-3"/><circle cx="7" cy="18" r="1.4" fill="white" stroke="none"/><circle cx="17" cy="18" r="1.4" fill="white" stroke="none"/><path d="M7 11l1-3h8l1 3"/></svg>`,
+  "blockforge": `<svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 4v10l-8 4-8-4V7z"/><path d="M12 3v8"/><path d="M4 7l8 4 8-4"/><path d="M12 11v10"/></svg>`,
+  "about": `<svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v.01"/><path d="M11 11h1v6h1"/></svg>`,
+};
+
+function setGlyph(el, app) {
+  el.classList.add("app-" + app.id);
+  const svg = APP_GLYPHS[app.id];
+  if (svg) el.innerHTML = svg;
+  else el.textContent = app.icon || "";
+  return el;
+}
+
+function renderStartApps(filter) {
+  smApps.innerHTML = "";
+  const apps = OS.apps.list().filter(a => !a.hidden && (!filter || a.title.toLowerCase().includes(filter.toLowerCase())));
+  for (const a of apps) {
+    const g = h("div", { class: "glyph" }); setGlyph(g, a);
+    const it = h("div", { class: "sm-app", onclick: () => { startMenu.classList.remove("open"); OS.apps.open(a.id); } },
+      g, h("div", {}, a.title));
+    smApps.appendChild(it);
+  }
+}
+window.renderStartApps = renderStartApps;
+
+startBtn.addEventListener("click", (e) => {
+  e.stopPropagation();
+  const open = !startMenu.classList.contains("open");
+  startMenu.classList.toggle("open", open);
+  if (open) { smSearch.value = ""; renderStartApps(""); setTimeout(() => smSearch.focus(), 20); }
+});
+document.addEventListener("click", (e) => {
+  if (!startMenu.contains(e.target) && !startBtn.contains(e.target)) startMenu.classList.remove("open");
+});
+smSearch.addEventListener("input", () => renderStartApps(smSearch.value));
+document.getElementById("sm-about").addEventListener("click", () => { startMenu.classList.remove("open"); OS.apps.open("about"); });
+document.getElementById("wp-quick").addEventListener("click", () => OS.apps.open("wallpaper"));
+
+const iconGrid = document.getElementById("icon-grid");
+function renderDesktopIcons() {
+  iconGrid.innerHTML = "";
+  const ids = ["los-santos", "blockforge", "shader-studio", "files", "paint", "calc", "terminal", "wallpaper", "about"];
+  for (const id of ids) {
+    const a = OS.apps.get(id); if (!a) continue;
+    const g = h("div", { class: "glyph" }); setGlyph(g, a);
+    const d = h("div", { class: "d-icon", title: a.title, ondblclick: () => OS.apps.open(a.id),
+                           onclick: (e) => {
+                             for (const n of iconGrid.querySelectorAll(".d-icon.selected")) n.classList.remove("selected");
+                             e.currentTarget.classList.add("selected");
+                           } },
+      g,
+      h("div", { class: "label" }, a.title));
+    iconGrid.appendChild(d);
+  }
+}
+window.renderDesktopIcons = renderDesktopIcons;
+
+/* Context menu on desktop */
+const ctxMenu = document.getElementById("ctx-menu");
+function showCtxMenu(x, y, items) {
+  ctxMenu.innerHTML = "";
+  for (const it of items) {
+    if (it.sep) { ctxMenu.appendChild(h("div", { class: "sep" })); continue; }
+    ctxMenu.appendChild(h("div", { class: "item", onclick: () => { ctxMenu.style.display = "none"; it.action(); } }, it.label));
+  }
+  ctxMenu.style.left = x + "px"; ctxMenu.style.top = y + "px"; ctxMenu.style.display = "block";
+}
+document.addEventListener("click", () => { ctxMenu.style.display = "none"; });
+document.getElementById("desktop").addEventListener("contextmenu", (e) => {
+  if (e.target.closest(".window")) return;
+  e.preventDefault();
+  showCtxMenu(e.clientX, e.clientY, [
+    { label: "Change wallpaper...", action: () => OS.apps.open("wallpaper") },
+    { label: "Open Shader Studio",  action: () => OS.apps.open("shader-studio") },
+    { sep: true },
+    { label: "Open Terminal",       action: () => OS.apps.open("terminal") },
+    { label: "Open Files",          action: () => OS.apps.open("files") },
+  ]);
+});
+
+/* Expose helpers */
+OS.ui = { h, showCtxMenu };
+OS.WP_PRESETS = WP_PRESETS;
+OS.WP_GRADIENTS = WP_GRADIENTS;
+
+/* =============================================================================
+   APPS — implementations in a separate <script type="module"> below
+   (using import { } from "three" again to avoid re-declaring the namespace).
+   The apps module registers each app with OS.apps and re-renders the UI.
+   ============================================================================= */
+
+document.dispatchEvent(new CustomEvent("opus-core-ready"));
+</script>
+
+<!-- ============================  APP IMPLEMENTATIONS  ============================ -->
+<script type="module">
+import * as THREE from "three";
+
+const OS = window.OS;
+const h  = OS.ui.h;
+const { WP_PRESETS, WP_GRADIENTS } = OS;
+
+/* =============================================================================
+   APP: WALLPAPER PICKER
+   ============================================================================= */
+OS.apps.register({
+  id: "wallpaper", title: "Wallpaper", icon: "WP", singleton: true,
+  defaultSize: { w: 720, h: 500 },
+  mount(content) {
+    content.innerHTML = "";
+    const previews = new Set(); // dispose trackers
+    const disposeAll = () => { for (const p of previews) p.dispose(); previews.clear(); };
+
+    const tabsEl = h("div", { class: "tabs" });
+    const body = h("div", { class: "body" });
+    const root = h("div", { class: "wp-app" }, tabsEl, body);
+
+    const tabs = [
+      { id: "shaders",   label: "Shaders" },
+      { id: "gradients", label: "Gradients" },
+      { id: "images",    label: "From Pictures" },
+      { id: "custom",    label: "Custom Shaders" },
+    ];
+    let current = "shaders";
+
+    function render() {
+      tabsEl.innerHTML = "";
+      for (const t of tabs) {
+        tabsEl.appendChild(h("div", {
+          class: "tab" + (current === t.id ? " active" : ""),
+          onclick: () => { current = t.id; render(); }
+        }, t.label));
+      }
+      disposeAll();
+      body.innerHTML = "";
+      if (current === "shaders") renderShaders();
+      else if (current === "gradients") renderGradients();
+      else if (current === "images") renderImages();
+      else if (current === "custom") renderCustom();
+    }
+
+    function thumb(name, applyFn, renderInto) {
+      const t = h("div", { class: "thumb" + (OS.wallpaper.currentName === name ? " selected" : ""),
+                           onclick: () => { applyFn(); render(); } });
+      renderInto(t);
+      t.appendChild(h("div", { class: "label" }, name));
+      return t;
+    }
+
+    function renderShaders() {
+      for (const name of Object.keys(WP_PRESETS)) {
+        body.appendChild(thumb(name, () => OS.wallpaper.setPreset(name), (t) => {
+          const c = h("canvas"); t.appendChild(c);
+          const ctrl = OS.wallpaper.constructor.livePreview(c, WP_PRESETS[name]);
+          previews.add(ctrl);
+        }));
+      }
+    }
+    function renderGradients() {
+      for (const g of WP_GRADIENTS) {
+        body.appendChild(thumb(g.name, () => OS.wallpaper.setGradient(g), (t) => {
+          t.appendChild(h("div", { class: "grad", style: `background: ${g.css}` }));
+        }));
+      }
+    }
+    function renderImages() {
+      const pics = OS.vfs.list("/Pictures") || [];
+      const imgs = pics.filter(n => n.type === "file" && /^image\//.test(n.mime || ""));
+      if (!imgs.length) {
+        body.appendChild(h("div", { style: "color:var(--muted);padding:8px;grid-column:1/-1;" },
+          "No images yet. Save PNGs from Paint Studio to /Pictures, or use the buttons below."));
+      }
+      for (const f of imgs) {
+        body.appendChild(thumb(f.name, () => OS.wallpaper.setImage(f.data, f.name), (t) => {
+          t.appendChild(h("img", { src: f.data, alt: f.name }));
+        }));
+      }
+      const upload = h("div", { class: "thumb",
+        style: "display:grid;place-items:center;color:var(--muted);font-size:12px;",
+        onclick: () => {
+          const inp = h("input", { type: "file", accept: "image/*" });
+          inp.addEventListener("change", (e) => {
+            const f = e.target.files?.[0]; if (!f) return;
+            const r = new FileReader();
+            r.onload = () => {
+              OS.vfs.write("/Pictures/" + f.name, r.result, f.type);
+              OS.wallpaper.setImage(r.result, f.name);
+              render();
+              OS.notify.ok("Wallpaper", "Saved to /Pictures and applied.");
+            };
+            r.readAsDataURL(f);
+          });
+          inp.click();
+        }}, "+ Upload image");
+      body.appendChild(upload);
+    }
+    function renderCustom() {
+      const shaders = OS.vfs.list("/Shaders") || [];
+      const frags = shaders.filter(f => f.type === "file" && f.name.endsWith(".frag"));
+      if (!frags.length) {
+        body.appendChild(h("div", { style: "color:var(--muted);padding:8px;grid-column:1/-1;" },
+          "No custom shaders yet. Write one in Shader Studio and save it to /Shaders."));
+      }
+      for (const f of frags) {
+        body.appendChild(thumb(f.name.replace(/\.frag$/, ""),
+          () => {
+            const r = OS.wallpaper.setCustomShader(f.name.replace(/\.frag$/, ""), f.data);
+            if (!r.ok) OS.notify.err("Shader", r.log);
+          },
+          (t) => {
+            const c = h("canvas"); t.appendChild(c);
+            const ctrl = OS.wallpaper.constructor.livePreview(c, f.data);
+            previews.add(ctrl);
+          }));
+      }
+      body.appendChild(h("div", { class: "thumb",
+        style: "display:grid;place-items:center;color:var(--muted);font-size:12px;",
+        onclick: () => OS.apps.open("shader-studio") }, "+ Open Shader Studio"));
+    }
+
+    content.appendChild(root);
+    render();
+    return { onClose: disposeAll };
+  }
+});
+
+/* =============================================================================
+   APP: CALCULATOR
+   ============================================================================= */
+OS.apps.register({
+  id: "calc", title: "Calculator", icon: "CA", singleton: true,
+  defaultSize: { w: 340, h: 540 },
+  mount(content) {
+    content.innerHTML = "";
+    /* ---- Shunting-yard expression parser ---- */
+    const tokenize = (s) => {
+      const out = [];
+      const re = /\s*(?:(\d+\.?\d*|\.\d+)|([+\-*/^%()])|(pi|e|sqrt|sin|cos|tan|asin|acos|atan|ln|log|abs|exp))/giy;
+      let m, i = 0;
+      while ((m = re.exec(s))) {
+        if (m[1] != null) out.push({ t: "num", v: parseFloat(m[1]) });
+        else if (m[2] != null) out.push({ t: "op", v: m[2] });
+        else if (m[3] != null) out.push({ t: "fn", v: m[3].toLowerCase() });
+        i = re.lastIndex;
+      }
+      if (i < s.length && s.slice(i).trim()) throw new Error("Syntax at '" + s.slice(i, i + 6) + "'");
+      return out;
+    };
+    const PREC = { "+":1,"-":1,"*":2,"/":2,"%":2,"^":3 };
+    const RIGHT = { "^": true };
+    const evalExpr = (s) => {
+      const tokens = tokenize(s); const out = []; const op = [];
+      // detect unary minus
+      for (let i = 0; i < tokens.length; i++) {
+        const t = tokens[i];
+        if (t.t === "op" && t.v === "-" && (i === 0 || (tokens[i-1].t === "op" && tokens[i-1].v !== ")"))) t.v = "u-";
+      }
+      for (const t of tokens) {
+        if (t.t === "num") out.push(t);
+        else if (t.t === "fn") op.push(t);
+        else if (t.t === "op") {
+          if (t.v === "(") op.push(t);
+          else if (t.v === ")") {
+            while (op.length && op[op.length-1].v !== "(") out.push(op.pop());
+            if (!op.length) throw new Error("Mismatched )");
+            op.pop();
+            if (op.length && op[op.length-1].t === "fn") out.push(op.pop());
+          } else {
+            const p = t.v === "u-" ? 4 : PREC[t.v];
+            while (op.length) {
+              const top = op[op.length-1];
+              if (top.v === "(") break;
+              const tp = top.v === "u-" ? 4 : (top.t === "fn" ? 5 : PREC[top.v]);
+              if (tp > p || (tp === p && !RIGHT[t.v])) out.push(op.pop()); else break;
+            }
+            op.push(t);
+          }
+        }
+      }
+      while (op.length) { if (op[op.length-1].v === "(") throw new Error("Mismatched ("); out.push(op.pop()); }
+      const st = [];
+      for (const t of out) {
+        if (t.t === "num") st.push(t.v);
+        else if (t.t === "fn") {
+          if (t.v === "pi") { st.push(Math.PI); continue; }
+          if (t.v === "e")  { st.push(Math.E);  continue; }
+          const a = st.pop();
+          const fns = { sqrt: Math.sqrt, sin: Math.sin, cos: Math.cos, tan: Math.tan,
+                        asin: Math.asin, acos: Math.acos, atan: Math.atan,
+                        ln: Math.log, log: Math.log10, abs: Math.abs, exp: Math.exp };
+          st.push(fns[t.v](a));
+        } else if (t.v === "u-") { const a = st.pop(); st.push(-a); }
+        else {
+          const b = st.pop(), a = st.pop();
+          if (t.v === "+") st.push(a+b); else if (t.v === "-") st.push(a-b);
+          else if (t.v === "*") st.push(a*b); else if (t.v === "/") st.push(a/b);
+          else if (t.v === "%") st.push(a%b); else if (t.v === "^") st.push(Math.pow(a,b));
+        }
+      }
+      if (st.length !== 1 || !Number.isFinite(st[0])) throw new Error("Math error");
+      return st[0];
+    };
+
+    /* ---- UI ---- */
+    let expr = "", history = JSON.parse(localStorage.getItem("opus-calc-hist") || "[]");
+    let mode = "calc"; // or "units"
+
+    const dispMain = h("div", {});
+    const dispSub  = h("div", { class: "sub" });
+    const keysEl   = h("div", { class: "keys" });
+    const histEl   = h("div", { class: "history" });
+    const unitsEl  = h("div", { class: "units" });
+
+    function updateHist() {
+      histEl.innerHTML = "";
+      for (const e of history.slice(-8).reverse()) histEl.appendChild(h("div", {}, e));
+    }
+    function setExpr(v) { expr = v; dispMain.textContent = v || "0"; dispSub.textContent = ""; }
+
+    const keys = [
+      ["(","C","⌫","%","/"],
+      ["7","8","9","^","*"],
+      ["4","5","6","sqrt","-"],
+      ["1","2","3","pi","+"],
+      ["0",".","e","ln","="],
+      ["sin","cos","tan","log",")"],
+    ];
+    function renderKeys() {
+      keysEl.innerHTML = "";
+      for (const row of keys) {
+        for (const k of row) {
+          const isEq = k === "=";
+          const isOp = /^[+\-*/%^]$/.test(k) || k === "C" || k === "⌫" || k === "(" || k === ")" || /^[a-z]+$/.test(k);
+          const cls = "key" + (isEq ? " eq" : isOp ? " op" : "");
+          keysEl.appendChild(h("div", { class: cls, onclick: () => press(k) }, k));
+        }
+      }
+    }
+    function press(k) {
+      if (k === "C") { setExpr(""); return; }
+      if (k === "⌫") { setExpr(expr.slice(0, -1)); return; }
+      if (k === "=") { compute(); return; }
+      if (/^(sqrt|sin|cos|tan|asin|acos|atan|ln|log|abs|exp)$/.test(k)) { setExpr(expr + k + "("); return; }
+      if (/^(pi|e)$/.test(k)) { setExpr(expr + k); return; }
+      setExpr(expr + k);
+    }
+    function compute() {
+      if (!expr) return;
+      try {
+        const v = evalExpr(expr);
+        dispSub.textContent = expr + " =";
+        dispMain.textContent = String(v);
+        history.push(expr + " = " + v);
+        history = history.slice(-40);
+        localStorage.setItem("opus-calc-hist", JSON.stringify(history));
+        expr = String(v);
+        updateHist();
+      } catch (e) {
+        dispSub.textContent = expr;
+        dispMain.textContent = "Error: " + e.message;
+      }
+    }
+
+    /* Unit conversion */
+    const UNITS = {
+      length: {
+        base: "m",
+        map: { m: 1, cm: 0.01, mm: 0.001, km: 1000, in: 0.0254, ft: 0.3048, yd: 0.9144, mi: 1609.344 }
+      },
+      mass:   { base: "kg", map: { kg: 1, g: 0.001, mg: 1e-6, lb: 0.45359237, oz: 0.0283495231 } },
+      volume: { base: "L",  map: { L: 1, mL: 0.001, gal: 3.785411784, qt: 0.946352946, cup: 0.2365882365 } },
+      temp:   { base: "C", custom: {
+        toC: { C: v => v, F: v => (v-32)*5/9, K: v => v - 273.15 },
+        fromC: { C: v => v, F: v => v*9/5+32, K: v => v + 273.15 } } },
+    };
+    function buildUnits() {
+      unitsEl.innerHTML = "";
+      const type = h("select");
+      for (const k of Object.keys(UNITS)) type.appendChild(h("option", { value: k }, k));
+      const fromU = h("select"), toU = h("select");
+      const fromV = h("input", { value: "1", type: "text" });
+      const result = h("div", { style: "padding:8px;background:rgba(0,0,0,0.3);border-radius:6px;font-family:var(--mono);text-align:right;" }, "—");
+
+      function refillUnits() {
+        const u = UNITS[type.value];
+        const keys = u.map ? Object.keys(u.map) : Object.keys(u.custom.toC);
+        fromU.innerHTML = ""; toU.innerHTML = "";
+        for (const k of keys) {
+          fromU.appendChild(h("option", { value: k }, k));
+          toU.appendChild(h("option", { value: k }, k));
+        }
+        if (keys.length > 1) toU.value = keys[1];
+      }
+      function compute() {
+        const u = UNITS[type.value];
+        const v = parseFloat(fromV.value);
+        if (!Number.isFinite(v)) { result.textContent = "—"; return; }
+        let out;
+        if (u.map) { out = v * u.map[fromU.value] / u.map[toU.value]; }
+        else { out = u.custom.fromC[toU.value](u.custom.toC[fromU.value](v)); }
+        result.textContent = `${v} ${fromU.value} = ${Number(out.toPrecision(8))} ${toU.value}`;
+      }
+      type.addEventListener("change", () => { refillUnits(); compute(); });
+      for (const el of [fromV, fromU, toU]) el.addEventListener("input", compute);
+      refillUnits(); compute();
+
+      unitsEl.appendChild(h("div", { class: "field" }, h("label", {}, "Category"), type));
+      unitsEl.appendChild(h("div", { style: "display:grid;grid-template-columns:1fr auto;gap:8px;" },
+        h("div", { class: "field" }, h("label", {}, "Value"), fromV),
+        h("div", { class: "field" }, h("label", {}, "From"), fromU)));
+      unitsEl.appendChild(h("div", { class: "field" }, h("label", {}, "To"), toU));
+      unitsEl.appendChild(result);
+    }
+
+    const tabsEl = h("div", { class: "tabs" });
+    function renderTabs() {
+      tabsEl.innerHTML = "";
+      for (const m of [["calc", "Scientific"], ["units", "Units"]]) {
+        tabsEl.appendChild(h("div", { class: "tab" + (mode === m[0] ? " active" : ""),
+          onclick: () => { mode = m[0]; renderTabs(); swap(); } }, m[1]));
+      }
+    }
+    function swap() {
+      dispMain.parentElement.style.display = mode === "calc" ? "" : "none";
+      keysEl.style.display = mode === "calc" ? "grid" : "none";
+      histEl.style.display = mode === "calc" ? "block" : "none";
+      unitsEl.style.display = mode === "units" ? "grid" : "none";
+    }
+
+    const displayEl = h("div", { class: "display" }, dispSub, dispMain);
+    const root = h("div", { class: "calc-app" }, tabsEl, displayEl, keysEl, histEl, unitsEl);
+    content.appendChild(root);
+
+    renderTabs(); renderKeys(); updateHist(); buildUnits(); setExpr(""); swap();
+
+    // Keyboard input when focused
+    const keyHandler = (e) => {
+      if (!root.closest(".window")?.classList.contains("focused")) return;
+      if (mode !== "calc") return;
+      if (e.key === "Enter" || e.key === "=") { e.preventDefault(); compute(); }
+      else if (e.key === "Backspace") { setExpr(expr.slice(0, -1)); }
+      else if (e.key === "Escape") { setExpr(""); }
+      else if (/^[0-9+\-*/().%^]$/.test(e.key)) setExpr(expr + e.key);
+    };
+    document.addEventListener("keydown", keyHandler);
+    return { onClose: () => document.removeEventListener("keydown", keyHandler) };
+  }
+});
+
+/* =============================================================================
+   APP: FILES
+   ============================================================================= */
+OS.apps.register({
+  id: "files", title: "Files", icon: "FI", singleton: false,
+  defaultSize: { w: 760, h: 500 },
+  mount(content) {
+    content.innerHTML = "";
+    let cwd = "/Documents";
+    const crumbs = h("div", { class: "crumbs" });
+    const grid = h("div", { class: "grid" });
+    const sidebar = h("div", { class: "sidebar" });
+    const main = h("div", { class: "main" }, crumbs, grid);
+    const root = h("div", { class: "files-app" }, sidebar, main);
+    content.appendChild(root);
+
+    function renderSidebar() {
+      sidebar.innerHTML = "";
+      for (const name of ["Documents", "Pictures", "Shaders", "Worlds"]) {
+        const path = "/" + name;
+        const it = h("div", { class: "item" + (cwd === path ? " active" : ""),
+          onclick: () => { cwd = path; render(); } }, name);
+        sidebar.appendChild(it);
+      }
+    }
+    function renderCrumbs() {
+      crumbs.innerHTML = "";
+      const parts = cwd.split("/").filter(Boolean);
+      crumbs.appendChild(h("span", { class: "btn", onclick: () => { cwd = "/"; render(); } }, "/"));
+      let p = "";
+      for (const s of parts) {
+        p += "/" + s;
+        const pp = p;
+        crumbs.appendChild(h("span", {}, " / "));
+        crumbs.appendChild(h("span", { class: "btn", onclick: () => { cwd = pp; render(); } }, s));
+      }
+      crumbs.appendChild(h("span", { style: "margin-left:auto" }, ""));
+      crumbs.style.display = "flex"; crumbs.style.alignItems = "center"; crumbs.style.gap = "4px";
+      crumbs.appendChild(h("span", { style: "flex:1" }));
+      crumbs.appendChild(h("button", { class: "btn", onclick: () => {
+        const name = prompt("Folder name:"); if (!name) return;
+        OS.vfs.mkdir(cwd + "/" + name); render();
+      }}, "New folder"));
+      crumbs.appendChild(h("button", { class: "btn", onclick: () => {
+        const name = prompt("File name:"); if (!name) return;
+        OS.vfs.write(cwd + "/" + name, "", "text/plain"); render();
+      }}, "New file"));
+    }
+    function openFile(f) {
+      const path = cwd + "/" + f.name;
+      if (f.mime && f.mime.startsWith("image/")) {
+        // simple image viewer
+        const w = OS.wm.open({ id: "img-viewer", title: f.name, icon: "IMG", defaultSize: { w: 560, h: 460 },
+          mount: (c) => {
+            c.style.background = "#111";
+            c.appendChild(h("img", { src: f.data, style: "max-width:100%;max-height:100%;display:block;margin:auto;position:absolute;inset:0;" }));
+          }});
+        return;
+      }
+      if (f.name.endsWith(".frag")) { OS.apps.open("shader-studio", { openPath: path }); return; }
+      // text editor window
+      OS.wm.open({ id: "text-viewer", title: f.name, icon: "TXT", defaultSize: { w: 560, h: 420 },
+        mount: (c) => {
+          const ta = h("textarea", { style: "width:100%;height:100%;border:none;background:#0b0f18;color:#e8ecf5;font-family:var(--mono);font-size:13px;padding:12px;resize:none;outline:none;" });
+          ta.value = f.data;
+          const save = h("button", { class: "btn primary", onclick: () => {
+            OS.vfs.write(path, ta.value, f.mime); OS.notify.ok("Saved", path);
+          }}, "Save");
+          const bar = h("div", { class: "toolbar" }, save, h("span", { style: "color:var(--muted);font-size:12px;" }, path));
+          c.innerHTML = ""; c.appendChild(h("div", { style: "display:flex;flex-direction:column;height:100%;" }, bar, ta));
+        }});
+    }
+    function render() {
+      renderSidebar(); renderCrumbs();
+      grid.innerHTML = "";
+      const items = OS.vfs.list(cwd) || [];
+      if (cwd !== "/") {
+        const up = h("div", { class: "f-entry", ondblclick: () => {
+          const parts = cwd.split("/").filter(Boolean); parts.pop();
+          cwd = "/" + parts.join("/"); if (cwd === "/") cwd = "/";
+          render();
+        }},
+          h("div", { class: "icon" }, ".."),
+          h("div", { class: "name" }, ".."));
+        grid.appendChild(up);
+      }
+      for (const f of items) {
+        const isImg = f.type === "file" && f.mime && f.mime.startsWith("image/");
+        const iconNode = isImg
+          ? h("div", { class: "icon" }, h("img", { src: f.data }))
+          : h("div", { class: "icon" }, f.type === "dir" ? "DIR" : (f.name.split(".").pop() || "FILE").toUpperCase().slice(0,4));
+        const entry = h("div", { class: "f-entry",
+          ondblclick: () => { if (f.type === "dir") { cwd = (cwd === "/" ? "" : cwd) + "/" + f.name; render(); } else openFile(f); },
+          onclick: (e) => {
+            for (const n of grid.querySelectorAll(".f-entry.selected")) n.classList.remove("selected");
+            e.currentTarget.classList.add("selected");
+          },
+          oncontextmenu: (e) => {
+            e.preventDefault();
+            OS.ui.showCtxMenu(e.clientX, e.clientY, [
+              ...(f.type === "file" && isImg ? [{ label: "Set as wallpaper", action: () => {
+                OS.wallpaper.setImage(f.data, f.name); OS.notify.ok("Wallpaper", "Applied.");
+              }}] : []),
+              { label: "Rename", action: () => {
+                const nn = prompt("New name:", f.name); if (!nn || nn === f.name) return;
+                OS.vfs.move((cwd === "/" ? "" : cwd) + "/" + f.name, (cwd === "/" ? "" : cwd) + "/" + nn);
+                render();
+              }},
+              { sep: true },
+              { label: "Delete", action: () => {
+                if (!confirm("Delete " + f.name + "?")) return;
+                OS.vfs.remove((cwd === "/" ? "" : cwd) + "/" + f.name); render();
+              }},
+            ]);
+          }},
+          iconNode,
+          h("div", { class: "name" }, f.name));
+        grid.appendChild(entry);
+      }
+    }
+    render();
+  }
+});
+
+/* =============================================================================
+   APP: PAINT STUDIO
+   ============================================================================= */
+OS.apps.register({
+  id: "paint", title: "Paint Studio", icon: "PT", singleton: false,
+  defaultSize: { w: 860, h: 580 },
+  mount(content) {
+    content.innerHTML = "";
+    const W = 640, H = 400;
+    const canvas = h("canvas", { width: W, height: H, style: `width:${W}px;height:${H}px;` });
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, W, H);
+
+    let tool = "brush", color = "#1f2937", size = 4;
+    const undoStack = []; const redoStack = []; const maxHist = 20;
+    function snap() { undoStack.push(ctx.getImageData(0, 0, W, H)); if (undoStack.length > maxHist) undoStack.shift(); redoStack.length = 0; }
+    snap();
+
+    let drawing = false, startX = 0, startY = 0, tempSnap = null;
+    function xy(e) { const r = canvas.getBoundingClientRect(); return [
+      Math.round((e.clientX - r.left) * W / r.width),
+      Math.round((e.clientY - r.top) * H / r.height)]; }
+
+    canvas.addEventListener("mousedown", (e) => {
+      drawing = true;
+      [startX, startY] = xy(e);
+      if (tool === "fill") { floodFill(startX, startY, color); drawing = false; snap(); return; }
+      tempSnap = ctx.getImageData(0, 0, W, H);
+      if (tool === "brush" || tool === "eraser") { dot(startX, startY); }
+    });
+    window.addEventListener("mousemove", (e) => {
+      if (!drawing) return;
+      const [x, y] = xy(e);
+      if (tool === "brush" || tool === "eraser") { line(startX, startY, x, y); startX = x; startY = y; }
+      else if (tool === "line") { ctx.putImageData(tempSnap, 0, 0); ctx.strokeStyle = color; ctx.lineWidth = size; ctx.beginPath(); ctx.moveTo(startX, startY); ctx.lineTo(x, y); ctx.stroke(); }
+      else if (tool === "rect") { ctx.putImageData(tempSnap, 0, 0); ctx.strokeStyle = color; ctx.lineWidth = size; ctx.strokeRect(startX, startY, x - startX, y - startY); }
+      else if (tool === "ellipse") { ctx.putImageData(tempSnap, 0, 0); ctx.strokeStyle = color; ctx.lineWidth = size; ctx.beginPath(); ctx.ellipse((startX+x)/2,(startY+y)/2,Math.abs(x-startX)/2,Math.abs(y-startY)/2,0,0,Math.PI*2); ctx.stroke(); }
+    });
+    window.addEventListener("mouseup", () => { if (drawing) { drawing = false; snap(); } });
+
+    function dot(x, y) {
+      ctx.fillStyle = tool === "eraser" ? "#fff" : color;
+      ctx.beginPath(); ctx.arc(x, y, size / 2, 0, Math.PI * 2); ctx.fill();
+    }
+    function line(x1, y1, x2, y2) {
+      ctx.strokeStyle = tool === "eraser" ? "#fff" : color; ctx.lineWidth = size; ctx.lineCap = "round";
+      ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+    }
+    function floodFill(sx, sy, hex) {
+      const data = ctx.getImageData(0, 0, W, H);
+      const px = data.data;
+      const idx = (x, y) => (y * W + x) * 4;
+      const i0 = idx(sx, sy);
+      const tr = px[i0], tg = px[i0+1], tb = px[i0+2];
+      const nc = hex2rgb(hex);
+      if (tr === nc[0] && tg === nc[1] && tb === nc[2]) return;
+      const stack = [[sx, sy]];
+      while (stack.length) {
+        const [x, y] = stack.pop();
+        if (x < 0 || y < 0 || x >= W || y >= H) continue;
+        const i = idx(x, y);
+        if (px[i] !== tr || px[i+1] !== tg || px[i+2] !== tb) continue;
+        px[i] = nc[0]; px[i+1] = nc[1]; px[i+2] = nc[2]; px[i+3] = 255;
+        stack.push([x+1,y],[x-1,y],[x,y+1],[x,y-1]);
+      }
+      ctx.putImageData(data, 0, 0);
+    }
+    function hex2rgb(hex) {
+      const c = hex.replace("#",""); const v = parseInt(c.length === 3 ? c.split("").map(x=>x+x).join("") : c, 16);
+      return [(v>>16)&255, (v>>8)&255, v&255];
+    }
+
+    const toolBtns = {};
+    function toolBtn(id, label) {
+      const b = h("button", { class: "btn" + (tool === id ? " active" : ""),
+        onclick: () => { tool = id; for (const k of Object.keys(toolBtns)) toolBtns[k].classList.toggle("active", k === id); } }, label);
+      toolBtns[id] = b; return b;
+    }
+    const colorInp = h("input", { type: "color", value: color, style: "width:32px;height:28px;border:none;background:transparent;" });
+    colorInp.addEventListener("input", () => color = colorInp.value);
+    const sizeInp = h("input", { type: "range", min: 1, max: 40, value: size, style: "width:100px" });
+    sizeInp.addEventListener("input", () => size = parseInt(sizeInp.value));
+
+    const toolbar = h("div", { class: "toolbar" },
+      toolBtn("brush", "Brush"),
+      toolBtn("eraser", "Eraser"),
+      toolBtn("line", "Line"),
+      toolBtn("rect", "Rect"),
+      toolBtn("ellipse", "Ellipse"),
+      toolBtn("fill", "Fill"),
+      h("span", { style: "width:1px;height:24px;background:var(--border);margin:0 4px;" }),
+      colorInp, sizeInp,
+      h("span", { style: "width:1px;height:24px;background:var(--border);margin:0 4px;" }),
+      h("button", { class: "btn", onclick: () => {
+        if (undoStack.length < 2) return;
+        redoStack.push(undoStack.pop());
+        ctx.putImageData(undoStack[undoStack.length-1], 0, 0);
+      }}, "Undo"),
+      h("button", { class: "btn", onclick: () => {
+        if (!redoStack.length) return;
+        const img = redoStack.pop(); undoStack.push(img); ctx.putImageData(img, 0, 0);
+      }}, "Redo"),
+      h("button", { class: "btn", onclick: () => {
+        ctx.fillStyle = "#fff"; ctx.fillRect(0,0,W,H); snap();
+      }}, "Clear"),
+      h("span", { style: "flex:1" }),
+      h("button", { class: "btn", onclick: () => {
+        const name = prompt("Save to /Pictures/<name>.png :", "drawing-" + Date.now() + ".png");
+        if (!name) return;
+        const data = canvas.toDataURL("image/png");
+        OS.vfs.write("/Pictures/" + name, data, "image/png");
+        OS.notify.ok("Saved", "/Pictures/" + name);
+      }}, "Save PNG"),
+      h("button", { class: "btn primary", onclick: () => {
+        OS.wallpaper.setImage(canvas.toDataURL("image/png"), "paint.png");
+        OS.notify.ok("Wallpaper", "Applied your artwork.");
+      }}, "Set as Wallpaper"));
+
+    const wrap = h("div", { class: "canvas-wrap" }, canvas);
+    content.appendChild(h("div", { class: "paint-app" }, toolbar, wrap));
+  }
+});
+
+/* =============================================================================
+   APP: TERMINAL
+   ============================================================================= */
+OS.apps.register({
+  id: "terminal", title: "Terminal", icon: "TR", singleton: false,
+  defaultSize: { w: 760, h: 440 },
+  mount(content) {
+    content.innerHTML = "";
+    let cwd = "/Documents";
+    const out = h("div", { class: "out" });
+    const input = h("input", { type: "text", autocomplete: "off", spellcheck: "false" });
+    const promptEl = h("span", { class: "prompt" }, cwd + " $");
+    const inline = h("div", { class: "inline" }, promptEl, input);
+    const root = h("div", { class: "term-app" }, out, inline);
+    content.appendChild(root);
+
+    const history = JSON.parse(localStorage.getItem("opus-term-hist") || "[]");
+    let histIdx = history.length;
+
+    function write(line, cls = "") {
+      out.appendChild(h("div", { class: cls }, line));
+      out.scrollTop = out.scrollHeight;
+    }
+    function writeHtml(node, cls = "") { const d = h("div", { class: cls }); d.appendChild(node); out.appendChild(d); out.scrollTop = out.scrollHeight; }
+
+    write("Opus Terminal 1.0 — type `help` for commands.", "mut");
+
+    const resolvePath = (p) => {
+      if (!p) return cwd;
+      if (p.startsWith("/")) return p;
+      const parts = (cwd + "/" + p).split("/").filter(Boolean);
+      const out = [];
+      for (const s of parts) { if (s === ".") continue; if (s === "..") out.pop(); else out.push(s); }
+      return "/" + out.join("/");
+    };
+
+    const COMMANDS = {
+      help() {
+        return [
+          "File system:",
+          "  ls [path]           list directory",
+          "  cd <path>           change directory",
+          "  cat <path>          print file",
+          "  mkdir <path>        make directory",
+          "  rm <path>           remove file or empty dir",
+          "  mv <from> <to>      move/rename",
+          "  echo <text> > <path>   write text to file",
+          "",
+          "OS control:",
+          "  apps                list registered apps",
+          "  open <app-id>       open app (e.g. los-santos)",
+          "  close <app-id>      close all windows of app",
+          "  wallpaper <name>    set preset (Aurora, Plasma, ...) or gradient name",
+          "  wallpaper shader <path>   load custom shader from /Shaders",
+          "  mic                 enable microphone for shader wallpapers",
+          "  clear               clear terminal",
+          "  js <expr>           eval JS with access to the `os` object",
+          "",
+          "Tip: tab-completion is not implemented; use up/down for history.",
+        ].join("\n");
+      },
+      clear() { out.innerHTML = ""; return null; },
+      pwd() { return cwd; },
+      apps() { return OS.apps.list().map(a => `  ${a.id.padEnd(16)} ${a.title}`).join("\n"); },
+      ls(args) {
+        const p = resolvePath(args[0]);
+        const list = OS.vfs.list(p);
+        if (!list) return { err: "No such directory: " + p };
+        return list.map(f => f.type === "dir" ? `${f.name}/` : f.name).join("  ");
+      },
+      cd(args) {
+        if (!args[0]) return { err: "Usage: cd <path>" };
+        const p = resolvePath(args[0]);
+        if (!OS.vfs.list(p)) return { err: "Not a directory: " + p };
+        cwd = p || "/"; promptEl.textContent = cwd + " $"; return null;
+      },
+      cat(args) {
+        if (!args[0]) return { err: "Usage: cat <path>" };
+        const f = OS.vfs.read(resolvePath(args[0]));
+        if (!f) return { err: "No such file" };
+        return typeof f.data === "string" ? (f.mime.startsWith("image/") ? "[binary image " + f.data.length + " bytes]" : f.data) : "[binary]";
+      },
+      mkdir(args) {
+        if (!args[0]) return { err: "Usage: mkdir <path>" };
+        OS.vfs.mkdir(resolvePath(args[0])); return null;
+      },
+      rm(args) {
+        if (!args[0]) return { err: "Usage: rm <path>" };
+        if (!OS.vfs.remove(resolvePath(args[0]))) return { err: "Not found" };
+        return null;
+      },
+      mv(args) {
+        if (args.length < 2) return { err: "Usage: mv <from> <to>" };
+        if (!OS.vfs.move(resolvePath(args[0]), resolvePath(args[1]))) return { err: "Move failed" };
+        return null;
+      },
+      echo(args, raw) {
+        // echo <text...> > <path>
+        const m = raw.match(/^echo\s+(.*?)\s*>\s*(\S+)\s*$/);
+        if (m) { OS.vfs.write(resolvePath(m[2]), m[1], "text/plain"); return null; }
+        return args.join(" ");
+      },
+      open(args) {
+        if (!args[0]) return { err: "Usage: open <app-id>" };
+        OS.apps.open(args[0]); return null;
+      },
+      close(args) {
+        if (!args[0]) return { err: "Usage: close <app-id>" };
+        OS.apps.close(args[0]); return null;
+      },
+      wallpaper(args, raw) {
+        if (!args[0]) return "Current: " + OS.wallpaper.currentName;
+        if (args[0] === "shader") {
+          const p = resolvePath(args[1] || ""); const f = OS.vfs.read(p);
+          if (!f) return { err: "No such shader: " + p };
+          const r = OS.wallpaper.setCustomShader(p.split("/").pop().replace(/\.frag$/, ""), f.data);
+          return r.ok ? "Applied shader " + p : { err: r.log };
+        }
+        if (WP_PRESETS[args[0]]) { OS.wallpaper.setPreset(args[0]); return "Applied preset " + args[0]; }
+        const g = WP_GRADIENTS.find(x => x.name.toLowerCase() === args[0].toLowerCase());
+        if (g) { OS.wallpaper.setGradient(g); return "Applied gradient " + g.name; }
+        return { err: "Unknown: " + args[0] + ". Presets: " + Object.keys(WP_PRESETS).join(", ") + ". Gradients: " + WP_GRADIENTS.map(x=>x.name).join(", ") };
+      },
+      async mic() { const ok = await OS.wallpaper.enableMic(); return ok ? "Microphone enabled." : { err: "Mic denied." }; },
+      js(args, raw) {
+        const expr = raw.replace(/^js\s+/, "");
+        try {
+          const fn = new Function("os", "OS", "return (" + expr + ")");
+          const v = fn(OS, OS);
+          if (v instanceof Promise) return v.then(r => String(r));
+          return typeof v === "object" ? JSON.stringify(v, null, 2) : String(v);
+        } catch (e) { return { err: e.message }; }
+      },
+    };
+
+    async function run(line) {
+      const trimmed = line.trim(); if (!trimmed) return;
+      writeHtml(h("span", {}, h("span", { class: "mut" }, cwd + " $ "), h("span", { class: "cmd" }, trimmed)));
+      history.push(trimmed); localStorage.setItem("opus-term-hist", JSON.stringify(history.slice(-100)));
+      histIdx = history.length;
+      const parts = trimmed.split(/\s+/);
+      const cmd = parts[0];
+      const args = parts.slice(1);
+      const fn = COMMANDS[cmd];
+      if (!fn) { write("Unknown command: " + cmd, "err"); return; }
+      try {
+        let r = fn(args, trimmed);
+        if (r instanceof Promise) r = await r;
+        if (r == null) return;
+        if (typeof r === "object" && r.err) write(r.err, "err");
+        else write(String(r));
+      } catch (e) { write(e.message, "err"); }
+    }
+
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { const v = input.value; input.value = ""; run(v); }
+      else if (e.key === "ArrowUp") { if (histIdx > 0) { histIdx--; input.value = history[histIdx] || ""; } e.preventDefault(); }
+      else if (e.key === "ArrowDown") { if (histIdx < history.length - 1) { histIdx++; input.value = history[histIdx] || ""; } else { histIdx = history.length; input.value = ""; } e.preventDefault(); }
+    });
+    root.addEventListener("mousedown", () => setTimeout(() => input.focus(), 0));
+
+    return { onFocus: (f) => { if (f) setTimeout(() => input.focus(), 20); } };
+  }
+});
+
+/* =============================================================================
+   APP: SHADER STUDIO
+   Live fragment-shader editor with preview, presets, save to VFS, apply to wallpaper.
+   ============================================================================= */
+OS.apps.register({
+  id: "shader-studio", title: "Shader Studio", icon: "SH", singleton: true,
+  defaultSize: { w: 900, h: 580 },
+  mount(content, { win }) {
+    content.innerHTML = "";
+    const editor = h("textarea", { class: "sh-editor", spellcheck: "false", autocomplete: "off" });
+    const previewCanvas = h("canvas");
+    const logEl = h("div", { class: "sh-log" });
+    const nameLabel = h("span", { class: "name" }, "Untitled");
+    let currentName = "Untitled";
+    let currentPath = null;
+    let ctrl = null;
+
+    function setLog(msg, ok = false) {
+      logEl.textContent = msg || (ok ? "Compiled OK." : "");
+      logEl.classList.toggle("ok", ok);
+    }
+    function recompile() {
+      if (ctrl) ctrl.dispose();
+      ctrl = OS.wallpaper.constructor.livePreview(previewCanvas, editor.value);
+      if (ctrl.error) setLog(ctrl.error, false);
+      else setLog("", true);
+    }
+    let deb = null;
+    editor.addEventListener("input", () => { clearTimeout(deb); deb = setTimeout(recompile, 300); });
+
+    editor.addEventListener("keydown", (e) => {
+      if (e.key === "Tab") { e.preventDefault();
+        const s = editor.selectionStart, eN = editor.selectionEnd;
+        editor.value = editor.value.slice(0, s) + "  " + editor.value.slice(eN);
+        editor.selectionStart = editor.selectionEnd = s + 2;
+      }
+    });
+
+    function openShader(name, src, path) {
+      currentName = name; currentPath = path || null;
+      nameLabel.textContent = name + (path ? " (" + path + ")" : "");
+      editor.value = src; recompile();
+    }
+
+    const top = h("div", { class: "sh-top" },
+      h("button", { class: "btn", onclick: () => {
+        const name = prompt("New shader name:", "untitled"); if (!name) return;
+        openShader(name, defaultShaderTemplate(), null);
+      }}, "New"),
+      h("button", { class: "btn", onclick: () => {
+        const shaders = OS.vfs.list("/Shaders") || [];
+        const list = shaders.filter(f => f.type === "file" && f.name.endsWith(".frag"));
+        if (!list.length) { OS.notify.push("No shaders saved yet", "Save one first."); return; }
+        const items = list.map(f => ({ label: f.name, action: () => openShader(f.name.replace(/\.frag$/, ""), f.data, "/Shaders/" + f.name) }));
+        const r = top.getBoundingClientRect();
+        OS.ui.showCtxMenu(r.left + 60, r.bottom + 4, items);
+      }}, "Open"),
+      h("button", { class: "btn", onclick: () => {
+        const name = prompt("Save to /Shaders/<name>.frag :", currentName + ".frag");
+        if (!name) return;
+        const path = "/Shaders/" + name;
+        OS.vfs.write(path, editor.value, "text/plain");
+        currentPath = path;
+        currentName = name.replace(/\.frag$/, "");
+        nameLabel.textContent = currentName + " (" + path + ")";
+        OS.notify.ok("Saved", path);
+      }}, "Save"),
+      h("button", { class: "btn primary", onclick: () => {
+        const r = OS.wallpaper.setCustomShader(currentName, editor.value);
+        if (r.ok) OS.notify.ok("Wallpaper", "Applied " + currentName);
+        else OS.notify.err("Shader error", r.log);
+      }}, "Set as Wallpaper"),
+      h("button", { class: "btn", onclick: () => OS.wallpaper.enableMic() }, "Enable Mic"),
+      nameLabel);
+
+    const presets = h("div", { class: "sh-presets" });
+    for (const name of Object.keys(WP_PRESETS)) {
+      presets.appendChild(h("button", { class: "btn", onclick: () => openShader(name, WP_PRESETS[name], null) }, name));
+    }
+
+    const main = h("div", { class: "sh-main" },
+      h("div", { class: "sh-editor-wrap" }, editor),
+      h("div", { class: "sh-preview" }, previewCanvas));
+
+    const root = h("div", { class: "shader-app" }, top, main, logEl, presets);
+    content.appendChild(root);
+
+    // Initial content — either openPath (from Files double-click) or Aurora preset
+    // openPath is passed via app registry opts but we don't forward it; use default
+    openShader("Aurora", WP_PRESETS["Aurora"], null);
+
+    function defaultShaderTemplate() {
+      return `precision highp float;
+uniform float u_time;
+uniform vec2 u_resolution;
+uniform vec2 u_mouse;
+uniform float u_audio;
+uniform float u_cpu;
+
+void main(){
+  vec2 uv = gl_FragCoord.xy / u_resolution.xy;
+  vec3 col = 0.5 + 0.5*cos(u_time + uv.xyx*3.14 + vec3(0.0, 2.0, 4.0));
+  col *= 0.8 + 0.3*u_audio;
+  gl_FragColor = vec4(col, 1.0);
+}`;
+    }
+
+    return {
+      onClose: () => { if (ctrl) ctrl.dispose(); clearTimeout(deb); },
+      onResize: () => { /* canvas auto-resizes in livePreview */ },
+    };
+  }
+});
+
+/* =============================================================================
+   APP: LOS SANTOS LITE — 3D open-world GTA clone
+   Features: procedural city, on-foot + driving, NPCs, police, wanted, HUD, minimap.
+   ============================================================================= */
+OS.apps.register({
+  id: "los-santos", title: "Los Santos Lite", icon: "LS", singleton: true,
+  defaultSize: { w: 960, h: 640 },
+  mount(content, { win }) {
+    content.innerHTML = "";
+    const root = h("div", { class: "game-root" });
+    const hud = h("div", { class: "game-hud" });
+    const crosshair = h("div", { class: "crosshair", style: "display:none" });
+    const minimap = h("canvas", { class: "hud-minimap", width: 160, height: 160,
+                                   style: "width:160px;height:160px;" });
+    const tl = h("div", { class: "hud-tl" });
+    const tr = h("div", { class: "hud-tr" }, minimap);
+    const bl = h("div", { class: "hud-bl" });
+    const br = h("div", { class: "hud-br" });
+    hud.appendChild(tl); hud.appendChild(tr); hud.appendChild(bl); hud.appendChild(br);
+
+    const overlay = h("div", { class: "game-overlay" });
+
+    content.appendChild(root);
+    content.appendChild(hud);
+    content.appendChild(crosshair);
+    content.appendChild(overlay);
+
+    /* ---------- THREE setup ---------- */
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setSize(content.clientWidth, content.clientHeight, false);
+    renderer.shadowMap.enabled = false;
+    renderer.setClearColor(0x87a7c9);
+    root.appendChild(renderer.domElement);
+
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.Fog(0x9bb6d9, 120, 500);
+
+    const camera = new THREE.PerspectiveCamera(70, content.clientWidth / content.clientHeight, 0.5, 2000);
+    camera.position.set(0, 6, 14);
+
+    const sun = new THREE.DirectionalLight(0xfff0d6, 1.1);
+    sun.position.set(80, 150, 60);
+    scene.add(sun);
+    scene.add(new THREE.HemisphereLight(0xbcd4ff, 0x3d3228, 0.6));
+
+    /* ---------- World: streets + buildings ---------- */
+    const BLOCK = 60;      // block size
+    const ROAD  = 14;      // road width
+    const GRID  = 8;       // city is GRID x GRID blocks
+    const WORLD = BLOCK * GRID;
+    // Ground
+    const groundMat = new THREE.MeshLambertMaterial({ color: 0x3a4050 });
+    const ground = new THREE.Mesh(new THREE.PlaneGeometry(WORLD * 1.4, WORLD * 1.4), groundMat);
+    ground.rotation.x = -Math.PI / 2; ground.position.y = -0.01;
+    scene.add(ground);
+
+    // Road grid — one big plane with a canvas texture
+    const roadTex = (() => {
+      const c = document.createElement("canvas"); c.width = c.height = 1024;
+      const g = c.getContext("2d");
+      g.fillStyle = "#2d323d"; g.fillRect(0,0,1024,1024);
+      // sidewalks (lighter border)
+      const bpx = Math.round(1024 * (BLOCK - ROAD) / 2 / BLOCK);
+      const roadW = Math.round(1024 * ROAD / BLOCK);
+      g.fillStyle = "#1a1d25";
+      // horizontal road
+      g.fillRect(0, (1024 - roadW) / 2, 1024, roadW);
+      // vertical road
+      g.fillRect((1024 - roadW) / 2, 0, roadW, 1024);
+      // sidewalks corners (block area minus road area)
+      g.fillStyle = "#7d8696";
+      g.fillRect(0, 0, bpx, bpx); g.fillRect(1024 - bpx, 0, bpx, bpx);
+      g.fillRect(0, 1024 - bpx, bpx, bpx); g.fillRect(1024 - bpx, 1024 - bpx, bpx, bpx);
+      // lane markings
+      g.strokeStyle = "#e4d879"; g.lineWidth = 3; g.setLineDash([18, 18]);
+      g.beginPath(); g.moveTo(0, 512); g.lineTo(1024, 512); g.stroke();
+      g.beginPath(); g.moveTo(512, 0); g.lineTo(512, 1024); g.stroke();
+      g.setLineDash([]);
+      const t = new THREE.CanvasTexture(c);
+      t.wrapS = t.wrapT = THREE.RepeatWrapping;
+      t.repeat.set(GRID, GRID);
+      t.anisotropy = 8;
+      return t;
+    })();
+    const plane = new THREE.Mesh(new THREE.PlaneGeometry(WORLD, WORLD),
+                                  new THREE.MeshLambertMaterial({ map: roadTex }));
+    plane.rotation.x = -Math.PI / 2;
+    plane.position.set(0, 0, 0);
+    scene.add(plane);
+
+    // Buildings — each block (minus road) gets 1-3 boxes. Track AABBs.
+    const buildings = []; // { x, z, w, d, h, mesh }
+    const buildMats = [
+      new THREE.MeshLambertMaterial({ color: 0x555c6b }),
+      new THREE.MeshLambertMaterial({ color: 0x6b6055 }),
+      new THREE.MeshLambertMaterial({ color: 0x49556b }),
+      new THREE.MeshLambertMaterial({ color: 0x403e48 }),
+      new THREE.MeshLambertMaterial({ color: 0x7a5a3f }),
+    ];
+    // window texture
+    const winTex = (() => {
+      const c = document.createElement("canvas"); c.width = 64; c.height = 64;
+      const g = c.getContext("2d");
+      g.fillStyle = "#242833"; g.fillRect(0,0,64,64);
+      g.fillStyle = "#ffd36b";
+      for (let y = 4; y < 64; y += 10)
+        for (let x = 4; x < 64; x += 8) {
+          if (Math.random() > 0.45) g.fillRect(x, y, 5, 6);
+        }
+      const t = new THREE.CanvasTexture(c);
+      t.wrapS = t.wrapT = THREE.RepeatWrapping;
+      return t;
+    })();
+    function addBuilding(cx, cz, w, d, h, color) {
+      const mat = new THREE.MeshLambertMaterial({ map: winTex.clone(), color });
+      mat.map.repeat.set(Math.max(1, Math.round(w/3)), Math.max(1, Math.round(h/3)));
+      mat.map.needsUpdate = true;
+      const geo = new THREE.BoxGeometry(w, h, d);
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.set(cx, h/2, cz);
+      scene.add(mesh);
+      buildings.push({ x: cx, z: cz, w, d, h, mesh });
+    }
+    const rand = (a, b) => a + Math.random() * (b - a);
+    for (let bx = -GRID/2; bx < GRID/2; bx++) {
+      for (let bz = -GRID/2; bz < GRID/2; bz++) {
+        const cx = bx * BLOCK + BLOCK/2;
+        const cz = bz * BLOCK + BLOCK/2;
+        const avail = BLOCK - ROAD - 2;
+        // Split block into 1-4 buildings
+        const count = 1 + Math.floor(Math.random() * 3);
+        for (let i = 0; i < count; i++) {
+          const w = rand(avail * 0.25, avail * 0.6);
+          const d = rand(avail * 0.25, avail * 0.6);
+          const h = rand(8, 42);
+          const px = cx + rand(-avail/2 + w/2, avail/2 - w/2);
+          const pz = cz + rand(-avail/2 + d/2, avail/2 - d/2);
+          const col = 0x606775 + Math.floor(Math.random() * 0x1f1f1f);
+          addBuilding(px, pz, w, d, h, col);
+        }
+      }
+    }
+
+    // Helpful collision: returns true if a point (x, z) with radius is inside any building footprint.
+    function collideCircle(x, z, r) {
+      for (const b of buildings) {
+        const dx = Math.max(0, Math.abs(x - b.x) - b.w/2);
+        const dz = Math.max(0, Math.abs(z - b.z) - b.d/2);
+        if (dx*dx + dz*dz < r*r) return b;
+      }
+      return null;
+    }
+
+    /* ---------- Entities ---------- */
+    // Player (on foot): capsule
+    const playerGroup = new THREE.Group();
+    {
+      const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.5, 1.2, 4, 8),
+                                   new THREE.MeshLambertMaterial({ color: 0xe8d0b0 }));
+      body.position.y = 1.1;
+      playerGroup.add(body);
+      const head = new THREE.Mesh(new THREE.SphereGeometry(0.35, 12, 12),
+                                   new THREE.MeshLambertMaterial({ color: 0xf0c999 }));
+      head.position.y = 2.1;
+      playerGroup.add(head);
+    }
+    scene.add(playerGroup);
+    playerGroup.position.set(0, 0, 0);
+
+    // Factory: car
+    function makeCar(color = 0xff3355, isPolice = false) {
+      const g = new THREE.Group();
+      const body = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.9, 4.2),
+                                    new THREE.MeshLambertMaterial({ color }));
+      body.position.y = 0.7;
+      g.add(body);
+      const roof = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.7, 2.2),
+                                    new THREE.MeshLambertMaterial({ color: color * 0.8 | 0 }));
+      roof.position.set(0, 1.45, -0.15);
+      g.add(roof);
+      // windshield stripe
+      const glass = new THREE.Mesh(new THREE.BoxGeometry(1.85, 0.5, 0.05),
+                                    new THREE.MeshLambertMaterial({ color: 0x0a1020 }));
+      glass.position.set(0, 1.3, 0.95); g.add(glass);
+      // wheels
+      const wheelMat = new THREE.MeshLambertMaterial({ color: 0x111111 });
+      const wheelGeo = new THREE.CylinderGeometry(0.42, 0.42, 0.3, 12);
+      wheelGeo.rotateZ(Math.PI / 2);
+      const wheels = [];
+      for (const [x, z] of [[-1.05, 1.4], [1.05, 1.4], [-1.05, -1.4], [1.05, -1.4]]) {
+        const w = new THREE.Mesh(wheelGeo, wheelMat);
+        w.position.set(x, 0.4, z); g.add(w); wheels.push(w);
+      }
+      if (isPolice) {
+        const top = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.18, 0.4),
+                                    new THREE.MeshLambertMaterial({ color: 0x1a1a1a }));
+        top.position.set(0, 1.8, 0); g.add(top);
+        const l = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.18, 0.4),
+                                   new THREE.MeshBasicMaterial({ color: 0xff3030 }));
+        l.position.set(-0.18, 1.89, 0); g.add(l);
+        const r = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.18, 0.4),
+                                   new THREE.MeshBasicMaterial({ color: 0x3060ff }));
+        r.position.set(0.18, 1.89, 0); g.add(r);
+        g.userData.lights = [l, r];
+      }
+      g.userData.wheels = wheels;
+      return g;
+    }
+
+    // Ped
+    function makePed(color = 0x4080ff) {
+      const g = new THREE.Group();
+      const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.35, 0.9, 3, 6),
+                                    new THREE.MeshLambertMaterial({ color }));
+      body.position.y = 0.9; g.add(body);
+      const head = new THREE.Mesh(new THREE.SphereGeometry(0.28, 8, 8),
+                                    new THREE.MeshLambertMaterial({ color: 0xf0c999 }));
+      head.position.y = 1.7; g.add(head);
+      return g;
+    }
+
+    // Populate world with peds and cars
+    const peds = [];
+    const aiCars = [];
+    const police = [];
+
+    // Spawn cars on road lanes
+    function randomRoadSpawn() {
+      // Pick a road-line position. Roads run along x = bx * BLOCK and z = bz * BLOCK lines.
+      const axis = Math.random() < 0.5 ? 0 : 1;
+      const rLine = (Math.floor(Math.random() * (GRID + 1)) - GRID / 2) * BLOCK;
+      const pos = (Math.random() - 0.5) * WORLD;
+      if (axis === 0) return new THREE.Vector3(pos, 0, rLine + (Math.random() < 0.5 ? 3 : -3));
+      else return new THREE.Vector3(rLine + (Math.random() < 0.5 ? 3 : -3), 0, pos);
+    }
+
+    for (let i = 0; i < 10; i++) {
+      const p = randomRoadSpawn();
+      const c = makeCar(0x3366cc + Math.floor(Math.random() * 0x333333));
+      c.position.copy(p);
+      c.rotation.y = Math.random() < 0.5 ? 0 : Math.PI;
+      scene.add(c);
+      aiCars.push({ mesh: c, vel: new THREE.Vector3(), speed: 6 + Math.random()*3,
+                     dir: Math.random() < 0.5 ? 1 : -1, axis: Math.abs(p.x) > Math.abs(p.z) ? 0 : 1,
+                     parked: false, destroyed: false });
+    }
+    for (let i = 0; i < 18; i++) {
+      const p = new THREE.Vector3((Math.random()-0.5) * WORLD * 0.9, 0, (Math.random()-0.5) * WORLD * 0.9);
+      if (collideCircle(p.x, p.z, 2)) { i--; continue; }
+      const g = makePed(Math.floor(Math.random() * 0xffffff));
+      g.position.copy(p);
+      scene.add(g);
+      peds.push({ mesh: g, dir: Math.random() * Math.PI * 2, speed: 1.5 + Math.random(),
+                   changeT: Math.random() * 3 + 1, alive: true });
+    }
+
+    /* ---------- Controls ---------- */
+    const keys = {};
+    const onKey = (e) => {
+      if (!gameFocused) return;
+      if (["KeyW","KeyA","KeyS","KeyD","Space","KeyE","ShiftLeft"].includes(e.code)) e.preventDefault();
+      keys[e.code] = e.type === "keydown";
+      if (e.type === "keydown" && e.code === "KeyE") tryEnterExit();
+    };
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("keyup", onKey);
+
+    // Mouse look (pointer lock)
+    let yaw = 0, pitch = -0.15;
+    const onMouseMove = (e) => {
+      if (document.pointerLockElement !== renderer.domElement) return;
+      yaw -= e.movementX * 0.0025;
+      pitch -= e.movementY * 0.0025;
+      pitch = Math.max(-1.2, Math.min(0.5, pitch));
+    };
+    document.addEventListener("mousemove", onMouseMove);
+
+    // Shoot (mouse button)
+    const onMouseDown = (e) => {
+      if (!gameFocused) return;
+      if (document.pointerLockElement !== renderer.domElement) return;
+      if (inCar || e.button !== 0) return;
+      shoot();
+    };
+    document.addEventListener("mousedown", onMouseDown);
+
+    /* ---------- Game state ---------- */
+    let inCar = null; // reference to car descriptor when driving
+    let health = 100, score = 0, stars = 0, alive = true, gameTime = 0, deadTime = 0;
+    let wantedCooldown = 0;
+    let gameFocused = false;
+    let paused = true;
+
+    const playerCar = null; // placeholder; inCar holds current car ref
+    const carDesc = { vel: new THREE.Vector3(), speed: 0, dir: new THREE.Vector3(0,0,1), steer: 0 };
+
+    function showOverlay(title, msg, btnLabel, btnAction) {
+      overlay.innerHTML = "";
+      overlay.appendChild(h("h2", {}, title));
+      if (msg) overlay.appendChild(h("p", {}, msg));
+      overlay.appendChild(h("div", { class: "keys" },
+        h("span", {}, "WASD"), h("span", {}, "Move / Drive"),
+        h("span", {}, "Mouse"), h("span", {}, "Look"),
+        h("span", {}, "E"), h("span", {}, "Enter / exit car"),
+        h("span", {}, "Left click"), h("span", {}, "Shoot (on foot)"),
+        h("span", {}, "Space"), h("span", {}, "Handbrake / Jump"),
+        h("span", {}, "Esc"), h("span", {}, "Release mouse")));
+      overlay.appendChild(h("button", { class: "btn primary", onclick: btnAction }, btnLabel));
+      overlay.style.display = "flex";
+    }
+    function hideOverlay() { overlay.style.display = "none"; }
+    function requestLock() {
+      try { renderer.domElement.requestPointerLock(); } catch (e) {}
+    }
+
+    showOverlay("Los Santos Lite", "Welcome to Opus City. Survive as long as possible. Hit pedestrians to raise your wanted level — the cops will come for you. Lose health, you reset.",
+      "Start", () => { hideOverlay(); requestLock(); });
+
+    document.addEventListener("pointerlockchange", () => {
+      gameFocused = document.pointerLockElement === renderer.domElement;
+      paused = !gameFocused;
+      crosshair.style.display = (gameFocused && !inCar) ? "block" : "none";
+      if (!gameFocused && alive && !overlay.style.display.includes("flex")) {
+        showOverlay("Paused", "Click Resume to return. Minimizing this window also pauses the game.",
+          "Resume", () => { hideOverlay(); requestLock(); });
+      }
+    });
+
+    /* ---------- Actions ---------- */
+    function tryEnterExit() {
+      if (inCar) {
+        // Exit
+        const c = inCar;
+        playerGroup.position.copy(c.mesh.position);
+        playerGroup.position.x += Math.cos(c.mesh.rotation.y) * 2.2;
+        playerGroup.position.z += Math.sin(c.mesh.rotation.y) * 2.2;
+        playerGroup.visible = true;
+        inCar = null;
+        crosshair.style.display = "block";
+        return;
+      }
+      // Find nearest car within 3.5
+      let best = null, bestD = 3.5 * 3.5;
+      for (const c of aiCars) {
+        if (c.destroyed) continue;
+        const dx = c.mesh.position.x - playerGroup.position.x;
+        const dz = c.mesh.position.z - playerGroup.position.z;
+        const d = dx*dx + dz*dz;
+        if (d < bestD) { bestD = d; best = c; }
+      }
+      for (const c of police) {
+        if (c.destroyed) continue;
+        const dx = c.mesh.position.x - playerGroup.position.x;
+        const dz = c.mesh.position.z - playerGroup.position.z;
+        const d = dx*dx + dz*dz;
+        if (d < bestD) { bestD = d; best = c; }
+      }
+      if (best) {
+        inCar = best; best.parked = true;
+        playerGroup.visible = false;
+        crosshair.style.display = "none";
+        if (police.includes(best)) { raiseWanted(2); OS.notify.push("Stolen police car", "+2 stars"); }
+        else raiseWanted(1);
+        carDesc.speed = 0; carDesc.vel.set(0,0,0);
+      }
+    }
+
+    function shoot() {
+      // hitscan against peds
+      const origin = new THREE.Vector3().copy(playerGroup.position).add(new THREE.Vector3(0, 1.6, 0));
+      const forward = new THREE.Vector3(-Math.sin(yaw), Math.sin(pitch), -Math.cos(yaw)).normalize();
+      const raycaster = new THREE.Raycaster(origin, forward, 0.1, 60);
+      // flash
+      flash();
+      // Gather ped meshes
+      const targets = peds.filter(p => p.alive).map(p => p.mesh);
+      const hits = raycaster.intersectObjects(targets, true);
+      if (hits.length) {
+        const obj = hits[0].object;
+        let grp = obj; while (grp.parent && !targets.includes(grp)) grp = grp.parent;
+        const ped = peds.find(p => p.mesh === grp);
+        if (ped) {
+          ped.alive = false;
+          ped.mesh.rotation.x = Math.PI / 2;
+          ped.mesh.position.y = 0.4;
+          score += 50;
+          raiseWanted(1);
+          OS.notify.push("-1 civilian", "+1 star");
+        }
+      }
+    }
+    function flash() {
+      const f = h("div", { style: "position:absolute;inset:0;background:rgba(255,255,255,0.25);pointer-events:none;" });
+      content.appendChild(f);
+      setTimeout(() => f.remove(), 60);
+    }
+    function raiseWanted(n) {
+      stars = Math.min(5, stars + n);
+      wantedCooldown = 12;
+      ensurePoliceCount();
+    }
+    function ensurePoliceCount() {
+      const target = Math.max(0, stars * 2 - 1);
+      while (police.length < target) {
+        const p = randomRoadSpawn();
+        // Spawn away from player
+        const dx = p.x - playerGroup.position.x, dz = p.z - playerGroup.position.z;
+        if (dx*dx + dz*dz < 80*80) { p.x += 160; p.z += 160; }
+        const car = makeCar(0x141e2e, true);
+        car.position.copy(p);
+        scene.add(car);
+        police.push({ mesh: car, vel: new THREE.Vector3(), speed: 10 + stars * 1.2, dir: 1, axis: 0,
+                       parked: false, destroyed: false, police: true, siren: 0 });
+      }
+    }
+
+    /* ---------- HUD rendering ---------- */
+    const healthPill = h("div", { class: "hud-pill" }, "HP 100");
+    const starsPill  = h("div", { class: "hud-pill" }, "Wanted:   ");
+    const scorePill  = h("div", { class: "hud-pill" }, "Score 0");
+    const speedPill  = h("div", { class: "hud-pill" }, "0 km/h");
+    const modePill   = h("div", { class: "hud-pill" }, "ON FOOT");
+    tl.appendChild(healthPill);
+    tl.appendChild(starsPill);
+    bl.appendChild(scorePill);
+    bl.appendChild(modePill);
+    br.appendChild(speedPill);
+
+    function renderMinimap() {
+      const c = minimap.getContext("2d");
+      const W = minimap.width, H = minimap.height;
+      c.fillStyle = "rgba(0,0,0,0.45)"; c.fillRect(0,0,W,H);
+      const range = 160; // units mapped to minimap
+      const scale = W / range;
+      c.save();
+      c.translate(W/2, H/2);
+      // rotate so forward is up
+      c.rotate(yaw);
+      const px = inCar ? inCar.mesh.position.x : playerGroup.position.x;
+      const pz = inCar ? inCar.mesh.position.z : playerGroup.position.z;
+      // buildings
+      c.fillStyle = "#5b6174";
+      for (const b of buildings) {
+        const dx = b.x - px, dz = b.z - pz;
+        if (Math.abs(dx) > range || Math.abs(dz) > range) continue;
+        c.fillRect(dx*scale - b.w*scale/2, dz*scale - b.d*scale/2, b.w*scale, b.d*scale);
+      }
+      // roads (approx by darker background behind buildings already) — skip
+      // police
+      c.fillStyle = "#ff3a3a";
+      for (const p of police) if (!p.destroyed) {
+        const dx = p.mesh.position.x - px, dz = p.mesh.position.z - pz;
+        if (Math.abs(dx) > range || Math.abs(dz) > range) continue;
+        c.beginPath(); c.arc(dx*scale, dz*scale, 3, 0, Math.PI*2); c.fill();
+      }
+      // cars
+      c.fillStyle = "#66b4ff";
+      for (const p of aiCars) if (!p.destroyed) {
+        const dx = p.mesh.position.x - px, dz = p.mesh.position.z - pz;
+        if (Math.abs(dx) > range || Math.abs(dz) > range) continue;
+        c.beginPath(); c.arc(dx*scale, dz*scale, 2.2, 0, Math.PI*2); c.fill();
+      }
+      // peds
+      c.fillStyle = "#8fe08f";
+      for (const p of peds) if (p.alive) {
+        const dx = p.mesh.position.x - px, dz = p.mesh.position.z - pz;
+        if (Math.abs(dx) > range || Math.abs(dz) > range) continue;
+        c.beginPath(); c.arc(dx*scale, dz*scale, 1.6, 0, Math.PI*2); c.fill();
+      }
+      c.restore();
+      // player arrow (after restore so stays up)
+      c.fillStyle = "#ffffff";
+      c.beginPath();
+      c.moveTo(W/2, H/2 - 6);
+      c.lineTo(W/2 - 5, H/2 + 5);
+      c.lineTo(W/2 + 5, H/2 + 5);
+      c.closePath(); c.fill();
+    }
+
+    /* ---------- AI updates ---------- */
+    function updatePeds(dt) {
+      for (const p of peds) {
+        if (!p.alive) continue;
+        p.changeT -= dt;
+        if (p.changeT <= 0) { p.dir += (Math.random() - 0.5); p.changeT = 1 + Math.random() * 3; }
+        const vx = Math.cos(p.dir) * p.speed * dt;
+        const vz = Math.sin(p.dir) * p.speed * dt;
+        const nx = p.mesh.position.x + vx;
+        const nz = p.mesh.position.z + vz;
+        if (collideCircle(nx, nz, 0.5) || Math.abs(nx) > WORLD/2 || Math.abs(nz) > WORLD/2) {
+          p.dir += Math.PI + (Math.random() - 0.5);
+        } else {
+          p.mesh.position.x = nx; p.mesh.position.z = nz;
+          p.mesh.rotation.y = -p.dir + Math.PI/2;
+        }
+        // car-vs-ped collision: if player car close, knock down + raise wanted
+        if (inCar) {
+          const dx = p.mesh.position.x - inCar.mesh.position.x;
+          const dz = p.mesh.position.z - inCar.mesh.position.z;
+          if (dx*dx + dz*dz < 3.5 && carDesc.speed > 4) {
+            p.alive = false; p.mesh.rotation.x = Math.PI/2; p.mesh.position.y = 0.4;
+            score += 20; raiseWanted(1);
+          }
+        }
+      }
+    }
+    function updateAiCars(dt) {
+      for (const c of aiCars) {
+        if (c.destroyed || c === inCar || c.parked) continue;
+        const ax = c.axis, dir = c.dir;
+        const step = c.speed * dt * dir;
+        if (ax === 0) {
+          c.mesh.position.x += step;
+          c.mesh.rotation.y = dir > 0 ? Math.PI/2 : -Math.PI/2;
+          if (Math.abs(c.mesh.position.x) > WORLD/2) c.dir *= -1;
+        } else {
+          c.mesh.position.z += step;
+          c.mesh.rotation.y = dir > 0 ? 0 : Math.PI;
+          if (Math.abs(c.mesh.position.z) > WORLD/2) c.dir *= -1;
+        }
+        // Building collision: reverse
+        if (collideCircle(c.mesh.position.x, c.mesh.position.z, 1.5)) c.dir *= -1;
+      }
+    }
+    function updatePolice(dt) {
+      for (const c of police) {
+        if (c.destroyed || c === inCar) continue;
+        c.siren = (c.siren || 0) + dt;
+        if (c.mesh.userData.lights) {
+          const flash = (Math.sin(c.siren * 12) + 1) * 0.5;
+          c.mesh.userData.lights[0].material.color.setRGB(flash, 0.08, 0.08);
+          c.mesh.userData.lights[1].material.color.setRGB(0.08, 0.08, 1 - flash);
+        }
+        // Chase player
+        const targetX = inCar ? inCar.mesh.position.x : playerGroup.position.x;
+        const targetZ = inCar ? inCar.mesh.position.z : playerGroup.position.z;
+        const dx = targetX - c.mesh.position.x, dz = targetZ - c.mesh.position.z;
+        const angle = Math.atan2(dx, dz);
+        // Rotate toward angle
+        let curr = c.mesh.rotation.y;
+        const diff = ((angle - curr + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+        c.mesh.rotation.y += Math.max(-1.8*dt, Math.min(1.8*dt, diff));
+        // Move forward
+        const fwd = new THREE.Vector3(Math.sin(c.mesh.rotation.y), 0, Math.cos(c.mesh.rotation.y));
+        const step = c.speed * dt;
+        const nx = c.mesh.position.x + fwd.x * step;
+        const nz = c.mesh.position.z + fwd.z * step;
+        if (!collideCircle(nx, nz, 1.5)) { c.mesh.position.x = nx; c.mesh.position.z = nz; }
+        // Attack: ram or shoot if close
+        const dist2 = dx*dx + dz*dz;
+        if (dist2 < 8*8 && !inCar) {
+          health -= 18 * dt;
+        } else if (dist2 < 4*4 && inCar) {
+          health -= 14 * dt;
+          carDesc.speed *= 0.9;
+        }
+      }
+    }
+
+    /* ---------- Player controls ---------- */
+    const tmp = new THREE.Vector3();
+    function updatePlayer(dt) {
+      if (inCar) return;
+      let mvx = 0, mvz = 0;
+      if (keys["KeyW"]) mvz -= 1;
+      if (keys["KeyS"]) mvz += 1;
+      if (keys["KeyA"]) mvx -= 1;
+      if (keys["KeyD"]) mvx += 1;
+      const mag = Math.hypot(mvx, mvz);
+      if (mag > 0) { mvx /= mag; mvz /= mag; }
+      const speed = keys["ShiftLeft"] ? 9 : 5;
+      // camera-relative movement (XZ plane)
+      const sin = Math.sin(yaw), cos = Math.cos(yaw);
+      const fx = -sin * mvz + cos * mvx;
+      const fz = -cos * mvz - sin * mvx;
+      const nx = playerGroup.position.x + fx * speed * dt;
+      const nz = playerGroup.position.z + fz * speed * dt;
+      if (!collideCircle(nx, playerGroup.position.z, 0.5)) playerGroup.position.x = nx;
+      if (!collideCircle(playerGroup.position.x, nz, 0.5)) playerGroup.position.z = nz;
+      // bound
+      playerGroup.position.x = Math.max(-WORLD/2 + 1, Math.min(WORLD/2 - 1, playerGroup.position.x));
+      playerGroup.position.z = Math.max(-WORLD/2 + 1, Math.min(WORLD/2 - 1, playerGroup.position.z));
+      // face movement direction
+      if (mag > 0) playerGroup.rotation.y = Math.atan2(fx, fz);
+    }
+
+    function updateCar(dt) {
+      if (!inCar) return;
+      const accel = keys["KeyW"] ? 14 : keys["KeyS"] ? -10 : 0;
+      const steerInput = (keys["KeyA"] ? 1 : 0) - (keys["KeyD"] ? 1 : 0);
+      carDesc.speed += accel * dt;
+      carDesc.speed *= keys["Space"] ? 0.9 : 0.995; // drag / handbrake
+      carDesc.speed = Math.max(-16, Math.min(30, carDesc.speed));
+      // steering only effective with speed
+      const steerAmt = steerInput * dt * 1.6 * Math.min(1, Math.abs(carDesc.speed) / 4);
+      inCar.mesh.rotation.y += steerAmt * Math.sign(carDesc.speed || 1);
+      const fwd = new THREE.Vector3(Math.sin(inCar.mesh.rotation.y), 0, Math.cos(inCar.mesh.rotation.y));
+      const nx = inCar.mesh.position.x + fwd.x * carDesc.speed * dt;
+      const nz = inCar.mesh.position.z + fwd.z * carDesc.speed * dt;
+      const hit = collideCircle(nx, nz, 1.4);
+      if (hit) {
+        health -= Math.abs(carDesc.speed) * 0.8 * dt;
+        carDesc.speed *= -0.3;
+      } else {
+        inCar.mesh.position.x = nx; inCar.mesh.position.z = nz;
+      }
+      // wheels spin
+      for (const w of inCar.mesh.userData.wheels || []) w.rotation.x -= carDesc.speed * dt * 1.5;
+    }
+
+    function updateCamera() {
+      const target = inCar ? inCar.mesh : playerGroup;
+      const tx = target.position.x, tz = target.position.z;
+      // Third person: behind target by distance, at height
+      const dist = inCar ? 10 : 5;
+      const height = inCar ? 4 : 2.7;
+      const sin = Math.sin(yaw), cos = Math.cos(yaw);
+      camera.position.set(
+        tx + sin * dist,
+        (inCar ? target.position.y : 0) + height - Math.sin(pitch) * 2,
+        tz + cos * dist);
+      camera.lookAt(tx, (inCar ? 1 : 1.5), tz);
+      // Apply pitch via small vertical offset on look target
+      const look = new THREE.Vector3(tx - Math.sin(yaw) * 2,
+                                       (inCar ? 1 : 1.5) + Math.sin(pitch) * 2,
+                                       tz - Math.cos(yaw) * 2);
+      camera.lookAt(look);
+    }
+
+    function updateHUD() {
+      healthPill.textContent = "HP " + Math.max(0, Math.floor(health));
+      starsPill.textContent  = "Wanted " + "*".repeat(stars).padEnd(5, "·");
+      scorePill.textContent  = "Score " + score;
+      speedPill.textContent  = inCar ? Math.round(Math.abs(carDesc.speed) * 3.6) + " km/h" : "—";
+      modePill.textContent   = inCar ? (inCar.police ? "IN POLICE CAR" : "DRIVING") : "ON FOOT";
+      renderMinimap();
+    }
+
+    function respawn() {
+      health = 100; score = 0; stars = 0; alive = true; deadTime = 0;
+      if (inCar) { inCar.parked = false; inCar = null; playerGroup.visible = true; }
+      playerGroup.position.set(0, 0, 0);
+      for (const p of police) { scene.remove(p.mesh); p.destroyed = true; }
+      police.length = 0;
+      for (const p of peds) if (!p.alive) { p.alive = true; p.mesh.rotation.x = 0; p.mesh.position.y = 0; }
+    }
+
+    /* ---------- Main loop (driven by WindowManager onTick) ---------- */
+    let lastT = performance.now();
+    function step(now) {
+      if (paused || !alive && deadTime === 0) {
+        renderer.render(scene, camera);
+        lastT = now;
+        return;
+      }
+      let dt = (now - lastT) / 1000;
+      lastT = now;
+      dt = Math.min(0.05, dt); // clamp
+      gameTime += dt;
+      wantedCooldown -= dt;
+      if (wantedCooldown <= 0 && stars > 0) { stars--; wantedCooldown = 15; ensurePoliceCount(); }
+
+      updatePlayer(dt);
+      updateCar(dt);
+      updatePeds(dt);
+      updateAiCars(dt);
+      updatePolice(dt);
+      updateCamera();
+      updateHUD();
+
+      if (health <= 0 && alive) {
+        alive = false; deadTime = 1;
+        showOverlay("Busted", "You were taken down. Score: " + score + ". Try again?",
+          "Respawn", () => { respawn(); hideOverlay(); requestLock(); });
+      }
+
+      renderer.render(scene, camera);
+    }
+
+    function resize() {
+      const w = content.clientWidth, hg = content.clientHeight;
+      renderer.setSize(w, hg, false);
+      camera.aspect = w / hg; camera.updateProjectionMatrix();
+    }
+    // Initial pause
+    paused = true;
+
+    return {
+      onTick: step,
+      onResize: resize,
+      onClose: () => {
+        document.removeEventListener("keydown", onKey);
+        document.removeEventListener("keyup", onKey);
+        document.removeEventListener("mousemove", onMouseMove);
+        document.removeEventListener("mousedown", onMouseDown);
+        renderer.dispose();
+        scene.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material) { if (Array.isArray(o.material)) o.material.forEach(m=>m.dispose()); else o.material.dispose(); } });
+        if (document.pointerLockElement === renderer.domElement) document.exitPointerLock();
+      },
+      onFocus: (f) => {
+        if (!f) {
+          paused = true;
+          if (document.pointerLockElement === renderer.domElement) document.exitPointerLock();
+        }
+      },
+    };
+  }
+});
+
+/* =============================================================================
+   APP: BLOCKFORGE — 3D voxel sandbox
+   64 x 24 x 64 chunk, procedural terrain, place/break, day/night, save to VFS.
+   ============================================================================= */
+OS.apps.register({
+  id: "blockforge", title: "Blockforge", icon: "BF", singleton: true,
+  defaultSize: { w: 960, h: 640 },
+  mount(content, { win }) {
+    content.innerHTML = "";
+    const root = h("div", { class: "game-root" });
+    const hud  = h("div", { class: "game-hud" });
+    const overlay = h("div", { class: "game-overlay" });
+    const crosshair = h("div", { class: "crosshair", style: "display:none" });
+    content.appendChild(root);
+    content.appendChild(hud);
+    content.appendChild(crosshair);
+    content.appendChild(overlay);
+
+    /* ---------- Block types ---------- */
+    const BLOCKS = [
+      { id: 0, name: "Air", color: null },
+      { id: 1, name: "Grass", color: [0x4e9a46, 0x7abf62, 0x5a6834] }, // top, side, bottom
+      { id: 2, name: "Dirt",  color: 0x7a5a3b },
+      { id: 3, name: "Stone", color: 0x808890 },
+      { id: 4, name: "Wood",  color: 0xa07050 },
+      { id: 5, name: "Leaves",color: 0x3a8c4f },
+      { id: 6, name: "Glass", color: 0xa3d9f5, transparent: true },
+      { id: 7, name: "Lava",  color: 0xff6a1a, emissive: true },
+    ];
+    const HOTBAR_IDS = [1, 2, 3, 4, 5, 6, 7];
+
+    /* ---------- Chunk data ---------- */
+    const SX = 64, SY = 24, SZ = 64;
+    const world = new Uint8Array(SX * SY * SZ);
+    const idx = (x, y, z) => (y * SZ + z) * SX + x;
+    const get = (x, y, z) => (x < 0 || y < 0 || z < 0 || x >= SX || y >= SY || z >= SZ) ? 0 : world[idx(x,y,z)];
+    const set = (x, y, z, v) => { if (x < 0 || y < 0 || z < 0 || x >= SX || y >= SY || z >= SZ) return false; world[idx(x,y,z)] = v; return true; };
+
+    // Procedural terrain
+    function hash2(x, z) {
+      const h = Math.sin(x * 12.9898 + z * 78.233) * 43758.5453;
+      return h - Math.floor(h);
+    }
+    function noise2(x, z) {
+      const xi = Math.floor(x), zi = Math.floor(z);
+      const xf = x - xi, zf = z - zi;
+      const u = xf*xf*(3-2*xf), v = zf*zf*(3-2*zf);
+      const a = hash2(xi, zi), b = hash2(xi+1, zi), c = hash2(xi, zi+1), d = hash2(xi+1, zi+1);
+      return a*(1-u)*(1-v) + b*u*(1-v) + c*(1-u)*v + d*u*v;
+    }
+    function generate() {
+      for (let x = 0; x < SX; x++) {
+        for (let z = 0; z < SZ; z++) {
+          let n = 0;
+          n += noise2(x*0.08, z*0.08) * 6;
+          n += noise2(x*0.22, z*0.22) * 2;
+          n += noise2(x*0.5, z*0.5) * 0.8;
+          const h = Math.max(1, Math.min(SY - 3, Math.floor(6 + n)));
+          for (let y = 0; y < h; y++) {
+            if (y === h - 1) world[idx(x,y,z)] = 1; // grass
+            else if (y > h - 4) world[idx(x,y,z)] = 2; // dirt
+            else world[idx(x,y,z)] = 3; // stone
+          }
+        }
+      }
+      // a few trees
+      for (let i = 0; i < 10; i++) {
+        const tx = 3 + Math.floor(Math.random() * (SX - 6));
+        const tz = 3 + Math.floor(Math.random() * (SZ - 6));
+        let ty = 0;
+        for (let y = SY - 1; y >= 0; y--) if (world[idx(tx, y, tz)] === 1) { ty = y + 1; break; }
+        if (!ty) continue;
+        for (let y = ty; y < ty + 4 && y < SY; y++) set(tx, y, tz, 4);
+        for (let dx = -2; dx <= 2; dx++) for (let dz = -2; dz <= 2; dz++) for (let dy = 3; dy <= 5; dy++) {
+          if (dx*dx + dz*dz + (dy-4)*(dy-4) <= 6 && !get(tx+dx, ty+dy, tz+dz)) set(tx+dx, ty+dy, tz+dz, 5);
+        }
+      }
+    }
+    generate();
+
+    /* ---------- THREE setup ---------- */
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setSize(content.clientWidth, content.clientHeight, false);
+    renderer.setClearColor(0x9ec5ff);
+    root.appendChild(renderer.domElement);
+
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.Fog(0x9ec5ff, 30, 120);
+
+    const camera = new THREE.PerspectiveCamera(75, content.clientWidth / content.clientHeight, 0.1, 400);
+
+    const sunDir = new THREE.DirectionalLight(0xfff4de, 1.0);
+    sunDir.position.set(1, 2, 0.7);
+    scene.add(sunDir);
+    const hemi = new THREE.HemisphereLight(0xa6c9ff, 0x3b3420, 0.6);
+    scene.add(hemi);
+
+    /* ---------- Meshing: one BufferGeometry per block type (grouped by material) ---------- */
+    // Materials
+    function solidMat(color, opts = {}) { return new THREE.MeshLambertMaterial({ color, ...opts }); }
+    const mats = {
+      1: [solidMat(0x4e9a46), solidMat(0x7abf62), solidMat(0x5a6834)], // top side bottom
+      2: solidMat(0x7a5a3b),
+      3: solidMat(0x808890),
+      4: solidMat(0xa07050),
+      5: solidMat(0x3a8c4f, { transparent: true, opacity: 0.95 }),
+      6: solidMat(0xa3d9f5, { transparent: true, opacity: 0.45 }),
+      7: solidMat(0xff6a1a, { emissive: 0xff3a00, emissiveIntensity: 0.6 }),
+    };
+    let chunkMesh = null;
+    function rebuildMesh() {
+      if (chunkMesh) { scene.remove(chunkMesh); chunkMesh.geometry.dispose(); }
+      const group = new THREE.Group();
+      // For each block type, build a BufferGeometry from exposed faces.
+      const types = [1, 2, 3, 4, 5, 6, 7];
+      for (const t of types) {
+        const positions = [];
+        const normals   = [];
+        const indices   = [];
+        // For grass, we need per-face colors; do it differently: use vertex colors with one mesh.
+        // Simpler: still one mesh per type, but for grass we duplicate by face using multimaterial mesh.
+        // For simplicity we'll use a single color here; grass uses a compromise green.
+        for (let y = 0; y < SY; y++)
+          for (let z = 0; z < SZ; z++)
+            for (let x = 0; x < SX; x++) {
+              if (world[idx(x,y,z)] !== t) continue;
+              // For each of 6 directions, if neighbor is air (or different transparent), emit face
+              const sides = [
+                [ 1,0,0, x+1,y,z, [[1,0,0],[1,1,0],[1,1,1],[1,0,1]] ],
+                [-1,0,0, x-1,y,z, [[0,0,1],[0,1,1],[0,1,0],[0,0,0]] ],
+                [0, 1,0, x,y+1,z, [[0,1,0],[0,1,1],[1,1,1],[1,1,0]] ],
+                [0,-1,0, x,y-1,z, [[0,0,0],[1,0,0],[1,0,1],[0,0,1]] ],
+                [0,0, 1, x,y,z+1, [[1,0,1],[1,1,1],[0,1,1],[0,0,1]] ],
+                [0,0,-1, x,y,z-1, [[0,0,0],[0,1,0],[1,1,0],[1,0,0]] ],
+              ];
+              for (const [nx, ny, nz, ax, ay, az, quad] of sides) {
+                const nb = get(ax, ay, az);
+                if (nb !== 0 && nb === t) continue;
+                // Don't draw between transparent and same-type solids; do draw between transparent & opaque.
+                if (nb === t) continue;
+                const v0 = positions.length / 3;
+                for (const [qx, qy, qz] of quad) {
+                  positions.push(x + qx, y + qy, z + qz);
+                  normals.push(nx, ny, nz);
+                }
+                indices.push(v0, v0+1, v0+2, v0, v0+2, v0+3);
+              }
+            }
+        if (!positions.length) continue;
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+        geo.setAttribute("normal",   new THREE.Float32BufferAttribute(normals, 3));
+        geo.setIndex(indices);
+        const mat = Array.isArray(mats[t]) ? mats[t][1] : mats[t]; // grass uses side color
+        const mesh = new THREE.Mesh(geo, mat);
+        group.add(mesh);
+      }
+      chunkMesh = group;
+      scene.add(chunkMesh);
+    }
+    rebuildMesh();
+
+    /* ---------- Player & controls (first-person) ---------- */
+    const player = {
+      pos: new THREE.Vector3(SX/2, SY, SZ/2),
+      vel: new THREE.Vector3(),
+      yaw: 0, pitch: 0,
+      onGround: false,
+      height: 1.7, radius: 0.35,
+      selected: 1, // hotbar slot (block id 1..7)
+    };
+
+    // Drop player onto terrain
+    (function findSpawn() {
+      for (let y = SY - 1; y > 0; y--) {
+        if (get(Math.floor(player.pos.x), y, Math.floor(player.pos.z)) !== 0) {
+          player.pos.y = y + 2; break;
+        }
+      }
+    })();
+
+    // Initial camera placement so the paused render shows the world.
+    player.yaw = Math.PI * 0.25; player.pitch = -0.15;
+    camera.position.set(player.pos.x, player.pos.y + player.height - 0.15, player.pos.z);
+    camera.rotation.order = "YXZ";
+    camera.rotation.y = player.yaw;
+    camera.rotation.x = player.pitch;
+    scene.background = new THREE.Color(0x9ec5ff);
+    // Warm up lighting so paused view is not too dark.
+    sunDir.position.set(0.6, 1.0, 0.4).multiplyScalar(100);
+    sunDir.intensity = 1.15; hemi.intensity = 0.7;
+
+    const keys = {};
+    const onKey = (e) => {
+      if (!gameFocused) return;
+      if (["KeyW","KeyA","KeyS","KeyD","Space","ShiftLeft","Digit1","Digit2","Digit3","Digit4","Digit5","Digit6","Digit7"].includes(e.code)) e.preventDefault();
+      keys[e.code] = e.type === "keydown";
+      if (e.type === "keydown" && /Digit[1-7]/.test(e.code)) {
+        player.selected = HOTBAR_IDS[parseInt(e.code.slice(5)) - 1];
+        renderHotbar();
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("keyup", onKey);
+
+    const onMouseMove = (e) => {
+      if (document.pointerLockElement !== renderer.domElement) return;
+      player.yaw   -= e.movementX * 0.0025;
+      player.pitch -= e.movementY * 0.0025;
+      player.pitch = Math.max(-1.5, Math.min(1.5, player.pitch));
+    };
+    document.addEventListener("mousemove", onMouseMove);
+
+    const onMouseDown = (e) => {
+      if (!gameFocused || document.pointerLockElement !== renderer.domElement) return;
+      const hit = raycastBlock();
+      if (!hit) return;
+      if (e.button === 0) {
+        // break
+        set(hit.block.x, hit.block.y, hit.block.z, 0);
+        rebuildMesh();
+      } else if (e.button === 2) {
+        const p = hit.place;
+        // don't place into player
+        const px = player.pos.x, py = player.pos.y, pz = player.pos.z;
+        const inside = (p.x <= px && px < p.x + 1) && (pz && pz >= p.z && pz < p.z + 1) && (p.y <= py && py < p.y + 2);
+        if (inside) return;
+        set(p.x, p.y, p.z, player.selected);
+        rebuildMesh();
+      }
+    };
+    document.addEventListener("mousedown", onMouseDown);
+    renderer.domElement.addEventListener("contextmenu", (e) => e.preventDefault());
+
+    // Simple DDA raycast for voxels (max 6 blocks reach)
+    function raycastBlock() {
+      const origin = new THREE.Vector3(player.pos.x, player.pos.y + player.height - 0.15, player.pos.z);
+      const dir = new THREE.Vector3(
+        -Math.sin(player.yaw) * Math.cos(player.pitch),
+         Math.sin(player.pitch),
+        -Math.cos(player.yaw) * Math.cos(player.pitch)).normalize();
+      let x = Math.floor(origin.x), y = Math.floor(origin.y), z = Math.floor(origin.z);
+      const stepX = dir.x > 0 ? 1 : -1, stepY = dir.y > 0 ? 1 : -1, stepZ = dir.z > 0 ? 1 : -1;
+      const tDeltaX = Math.abs(1 / dir.x), tDeltaY = Math.abs(1 / dir.y), tDeltaZ = Math.abs(1 / dir.z);
+      let tMaxX = ((stepX > 0 ? x + 1 : x) - origin.x) / dir.x;
+      let tMaxY = ((stepY > 0 ? y + 1 : y) - origin.y) / dir.y;
+      let tMaxZ = ((stepZ > 0 ? z + 1 : z) - origin.z) / dir.z;
+      let face = null;
+      for (let i = 0; i < 80; i++) {
+        if (get(x, y, z) !== 0) {
+          return { block: { x, y, z }, place: face || { x, y: y+1, z } };
+        }
+        if (tMaxX < tMaxY && tMaxX < tMaxZ) { x += stepX; tMaxX += tDeltaX; face = { x: x - stepX, y, z }; }
+        else if (tMaxY < tMaxZ) { y += stepY; tMaxY += tDeltaY; face = { x, y: y - stepY, z }; }
+        else { z += stepZ; tMaxZ += tDeltaZ; face = { x, y, z: z - stepZ }; }
+        if (x < 0 || x >= SX || y < 0 || y >= SY || z < 0 || z >= SZ) return null;
+      }
+      return null;
+    }
+
+    /* ---------- Physics (AABB vs blocks) ---------- */
+    function moveAxis(axis, delta) {
+      const p = player.pos;
+      const r = player.radius;
+      const h = player.height;
+      const newP = p.clone(); newP[axis] += delta;
+      const minY = newP.y, maxY = newP.y + h;
+      const minX = newP.x - r, maxX = newP.x + r;
+      const minZ = newP.z - r, maxZ = newP.z + r;
+      // If any solid block inside the new AABB, cancel
+      const x0 = Math.floor(minX), x1 = Math.floor(maxX);
+      const z0 = Math.floor(minZ), z1 = Math.floor(maxZ);
+      const y0 = Math.floor(minY + 0.001), y1 = Math.floor(maxY - 0.001);
+      for (let x = x0; x <= x1; x++)
+        for (let y = y0; y <= y1; y++)
+          for (let z = z0; z <= z1; z++) {
+            const b = get(x, y, z);
+            if (b !== 0 && b !== 6) { // glass is solid; treat all as solid
+              // Do not pass through
+              if (axis === "y") {
+                if (delta < 0) { p.y = y + 1; player.vel.y = 0; player.onGround = true; }
+                else           { p.y = y - h - 0.001; player.vel.y = 0; }
+                return;
+              } else return;
+            }
+          }
+      p[axis] = newP[axis];
+      if (axis === "y" && delta < 0) player.onGround = false;
+    }
+
+    /* ---------- Day / night cycle ---------- */
+    let dayT = 0; // seconds; cycle is 120s
+    function updateDayNight(dt) {
+      dayT = (dayT + dt) % 120;
+      const t = dayT / 120; // 0..1
+      const angle = t * Math.PI * 2; // 0 sunrise, pi midnight
+      const y = Math.sin(angle), x = Math.cos(angle);
+      sunDir.position.set(x, Math.max(0.1, y), 0.5).multiplyScalar(100);
+      const dayLight = Math.max(0, y);
+      sunDir.intensity = 0.15 + dayLight * 1.0;
+      hemi.intensity   = 0.25 + dayLight * 0.45;
+      const skyDay = new THREE.Color(0x9ec5ff);
+      const skyNight = new THREE.Color(0x10162a);
+      const sky = skyNight.clone().lerp(skyDay, dayLight);
+      scene.background = sky;
+      scene.fog.color.copy(sky);
+      renderer.setClearColor(sky);
+    }
+
+    /* ---------- HUD ---------- */
+    const hotbarEl = h("div", { class: "hud-pill", style: "display:flex;gap:6px;padding:6px 8px;font-family:var(--mono);" });
+    const timePill = h("div", { class: "hud-pill" }, "Day 00:00");
+    const coordPill = h("div", { class: "hud-pill" }, "x 0 y 0 z 0");
+    const br = h("div", { class: "hud-br" }, hotbarEl);
+    const tl = h("div", { class: "hud-tl" }, timePill, coordPill);
+    hud.appendChild(br);
+    hud.appendChild(tl);
+
+    function renderHotbar() {
+      hotbarEl.innerHTML = "";
+      for (let i = 0; i < HOTBAR_IDS.length; i++) {
+        const id = HOTBAR_IDS[i];
+        const sel = id === player.selected;
+        const bg = (() => {
+          const m = mats[id]; const c = Array.isArray(m) ? m[0] : m;
+          return "#" + c.color.getHexString();
+        })();
+        hotbarEl.appendChild(h("div", {
+          style: `width:26px;height:26px;border-radius:4px;background:${bg};border:2px solid ${sel ? "#fff" : "rgba(255,255,255,0.2)"};display:grid;place-items:center;font-size:10px;color:rgba(0,0,0,0.7);font-weight:700;`,
+          onclick: () => { player.selected = id; renderHotbar(); }
+        }, String(i + 1)));
+      }
+    }
+    renderHotbar();
+
+    /* ---------- Overlay / lock ---------- */
+    let gameFocused = false;
+    let paused = true;
+    function showOverlay(title, msg, btnLabel, btnAction, btns = []) {
+      overlay.innerHTML = "";
+      overlay.appendChild(h("h2", {}, title));
+      if (msg) overlay.appendChild(h("p", {}, msg));
+      overlay.appendChild(h("div", { class: "keys" },
+        h("span", {}, "WASD"), h("span", {}, "Move"),
+        h("span", {}, "Mouse"), h("span", {}, "Look"),
+        h("span", {}, "Space"), h("span", {}, "Jump"),
+        h("span", {}, "Shift"), h("span", {}, "Sprint"),
+        h("span", {}, "LMB"), h("span", {}, "Break block"),
+        h("span", {}, "RMB"), h("span", {}, "Place block"),
+        h("span", {}, "1-7"), h("span", {}, "Select block")));
+      const row = h("div", { style: "display:flex;gap:8px;" });
+      row.appendChild(h("button", { class: "btn primary", onclick: btnAction }, btnLabel));
+      for (const b of btns) row.appendChild(h("button", { class: "btn", onclick: b.action }, b.label));
+      overlay.appendChild(row);
+      overlay.style.display = "flex";
+    }
+    function hideOverlay() { overlay.style.display = "none"; }
+    function requestLock() { try { renderer.domElement.requestPointerLock(); } catch (e) {} }
+
+    showOverlay("Blockforge", "A tiny voxel world. Break, place, build. 1-7 chooses your block.",
+      "Play", () => { hideOverlay(); requestLock(); },
+      [
+        { label: "Save world", action: () => { saveWorld(); } },
+        { label: "Load world", action: () => { loadWorld(); } },
+        { label: "Regenerate", action: () => { generate(); rebuildMesh(); OS.notify.ok("Blockforge", "New world generated."); } },
+      ]);
+
+    document.addEventListener("pointerlockchange", () => {
+      gameFocused = document.pointerLockElement === renderer.domElement;
+      paused = !gameFocused;
+      crosshair.style.display = gameFocused ? "block" : "none";
+      if (!gameFocused && overlay.style.display !== "flex") {
+        showOverlay("Paused", null, "Resume", () => { hideOverlay(); requestLock(); },
+          [ { label: "Save world", action: () => saveWorld() }, { label: "Load world", action: () => loadWorld() } ]);
+      }
+    });
+
+    /* ---------- Save / Load (RLE-compressed) ---------- */
+    function saveWorld() {
+      const name = prompt("Save as /Worlds/<name>.bfw :", "world-" + Date.now() + ".bfw");
+      if (!name) return;
+      // Simple RLE on Uint8Array
+      const out = [];
+      let i = 0;
+      while (i < world.length) {
+        const v = world[i]; let j = i + 1;
+        while (j < world.length && world[j] === v && j - i < 255) j++;
+        out.push(v, j - i); i = j;
+      }
+      const data = { sx: SX, sy: SY, sz: SZ, rle: out };
+      OS.vfs.write("/Worlds/" + name, JSON.stringify(data), "application/json");
+      OS.notify.ok("Saved", "/Worlds/" + name);
+    }
+    function loadWorld() {
+      const list = (OS.vfs.list("/Worlds") || []).filter(f => f.type === "file" && f.name.endsWith(".bfw"));
+      if (!list.length) { OS.notify.push("No saves", "Nothing in /Worlds yet."); return; }
+      const items = list.map(f => ({ label: f.name, action: () => {
+        try {
+          const d = JSON.parse(f.data);
+          if (d.sx !== SX || d.sy !== SY || d.sz !== SZ) { OS.notify.err("Load", "Size mismatch"); return; }
+          let p = 0;
+          for (let i = 0; i < d.rle.length; i += 2) {
+            const v = d.rle[i], n = d.rle[i+1];
+            for (let k = 0; k < n; k++) world[p++] = v;
+          }
+          rebuildMesh();
+          OS.notify.ok("Loaded", f.name);
+        } catch (e) { OS.notify.err("Load", e.message); }
+      }}));
+      const r = overlay.getBoundingClientRect();
+      OS.ui.showCtxMenu(r.left + 20, r.top + 20, items);
+    }
+
+    /* ---------- Main loop ---------- */
+    let lastT = performance.now();
+    function step(now) {
+      if (paused) { renderer.render(scene, camera); lastT = now; return; }
+      let dt = Math.min(0.05, (now - lastT) / 1000); lastT = now;
+
+      // Input
+      let mvx = 0, mvz = 0;
+      if (keys["KeyW"]) mvz -= 1;
+      if (keys["KeyS"]) mvz += 1;
+      if (keys["KeyA"]) mvx -= 1;
+      if (keys["KeyD"]) mvx += 1;
+      const mag = Math.hypot(mvx, mvz);
+      if (mag > 0) { mvx /= mag; mvz /= mag; }
+      const sprint = keys["ShiftLeft"] ? 1.7 : 1;
+      const speed = 5 * sprint;
+      const sin = Math.sin(player.yaw), cos = Math.cos(player.yaw);
+      const fx = -sin * mvz + cos * mvx;
+      const fz = -cos * mvz - sin * mvx;
+
+      moveAxis("x", fx * speed * dt);
+      moveAxis("z", fz * speed * dt);
+      // gravity
+      player.vel.y -= 20 * dt;
+      if (player.vel.y < -30) player.vel.y = -30;
+      moveAxis("y", player.vel.y * dt);
+      if (keys["Space"] && player.onGround) { player.vel.y = 8; player.onGround = false; }
+
+      // Fall out of world
+      if (player.pos.y < -10) { player.pos.set(SX/2, SY, SZ/2); player.vel.set(0,0,0); }
+
+      // Camera
+      const eyeY = player.pos.y + player.height - 0.15;
+      camera.position.set(player.pos.x, eyeY, player.pos.z);
+      camera.rotation.order = "YXZ";
+      camera.rotation.y = player.yaw;
+      camera.rotation.x = player.pitch;
+
+      // Time / HUD
+      updateDayNight(dt);
+      const dayFrac = dayT / 120;
+      const hours = Math.floor(dayFrac * 24), mins = Math.floor((dayFrac * 24 * 60) % 60);
+      timePill.textContent = `Day ${String(hours).padStart(2,"0")}:${String(mins).padStart(2,"0")}`;
+      coordPill.textContent = `x ${player.pos.x.toFixed(1)}  y ${player.pos.y.toFixed(1)}  z ${player.pos.z.toFixed(1)}`;
+
+      renderer.render(scene, camera);
+    }
+
+    function resize() {
+      const w = content.clientWidth, hg = content.clientHeight;
+      renderer.setSize(w, hg, false);
+      camera.aspect = w / hg; camera.updateProjectionMatrix();
+    }
+
+    return {
+      onTick: step,
+      onResize: resize,
+      onFocus: (f) => { if (!f) { paused = true; if (document.pointerLockElement === renderer.domElement) document.exitPointerLock(); } },
+      onClose: () => {
+        document.removeEventListener("keydown", onKey);
+        document.removeEventListener("keyup", onKey);
+        document.removeEventListener("mousemove", onMouseMove);
+        document.removeEventListener("mousedown", onMouseDown);
+        renderer.dispose();
+        scene.traverse(o => { if (o.geometry) o.geometry.dispose(); });
+        if (document.pointerLockElement === renderer.domElement) document.exitPointerLock();
+      }
+    };
+  }
+});
+
+/* =============================================================================
+   APP: ABOUT
+   ============================================================================= */
+OS.apps.register({
+  id: "about", title: "About Opus OS", icon: "?", singleton: true,
+  defaultSize: { w: 620, h: 560 },
+  mount(content) {
+    content.innerHTML = "";
+    const body = h("div", { class: "about-app" });
+    body.innerHTML = `
+      <h1>Opus Browser OS 4.7</h1>
+      <div class="note">A single-file desktop environment that runs entirely in Chrome.</div>
+
+      <h2>Special feature: Live GLSL Shader Wallpapers</h2>
+      <p>The desktop background is rendered by a dedicated WebGL canvas running a
+      user-editable fragment shader. Every shader has access to these uniforms:</p>
+      <ul>
+        <li><code>u_time</code> &mdash; seconds since OS boot</li>
+        <li><code>u_resolution</code> &mdash; pixel resolution of the desktop</li>
+        <li><code>u_mouse</code> &mdash; normalized mouse position (0..1)</li>
+        <li><code>u_audio</code> &mdash; smoothed microphone loudness (opt-in)</li>
+        <li><code>u_cpu</code> &mdash; 0 idle &rarr; 1 heavy, from rolling frame-time</li>
+      </ul>
+      <p>Why it's special: most OSes only let you pick a static image for the wallpaper.
+      Opus turns the wallpaper into a <em>program</em> &mdash; animated, audio-reactive,
+      and CPU-reactive. Open <strong>Shader Studio</strong> to write your own, save it to
+      <code>/Shaders</code>, and apply it with one click. Saved shaders persist across reloads.</p>
+
+      <h2>Applications</h2>
+      <ul>
+        <li><strong>Los Santos Lite</strong> &mdash; 3D open-world GTA clone with driving, pedestrians, police, wanted system.</li>
+        <li><strong>Blockforge</strong> &mdash; 3D voxel sandbox with procedural terrain, placing/breaking blocks, day/night.</li>
+        <li><strong>Shader Studio</strong> &mdash; fragment shader editor with live preview and 6 presets.</li>
+        <li><strong>Files</strong> &mdash; localStorage-backed virtual filesystem with <code>/Documents</code>, <code>/Pictures</code>, <code>/Shaders</code>, <code>/Worlds</code>.</li>
+        <li><strong>Paint Studio</strong> &mdash; drawing canvas with brush/rect/line/fill, save PNG to VFS, set as wallpaper.</li>
+        <li><strong>Calculator</strong> &mdash; scientific expression parser (no <code>eval</code>) + unit conversions.</li>
+        <li><strong>Terminal</strong> &mdash; real shell that controls the OS (<code>open</code>, <code>wallpaper</code>, <code>ls</code>, <code>js</code>...).</li>
+        <li><strong>Wallpaper</strong> &mdash; picker for gradients, images from VFS, presets, and custom shaders.</li>
+      </ul>
+
+      <h2>Shortcuts</h2>
+      <ul>
+        <li><span class="kbd">Ctrl/Cmd</span> + <span class="kbd">Space</span> &mdash; toggle Start menu</li>
+        <li><span class="kbd">Esc</span> &mdash; exit pointer lock, close Start menu</li>
+        <li>Double-click title bar &mdash; maximize; drag corner to resize</li>
+      </ul>
+
+      <div class="note">All data lives in localStorage. Clearing site data wipes the VFS and wallpaper.
+      Three.js is loaded from the unpkg CDN; the rest of the OS is inline in a single HTML file.</div>
+    `;
+    content.appendChild(body);
+  }
+});
+</script>
+
+<!-- Sanity boot: render desktop icons + start menu once both modules have registered. -->
+<script type="module">
+  queueMicrotask(() => {
+    window.renderDesktopIcons?.();
+    window.renderStartApps?.("");
+  });
+</script>
+
+</body>
+</html>
